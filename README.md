@@ -1,1 +1,1 @@
-# 🚀 NextCollege Scaffold & Template Repository
+﻿# 🚀 NextCollege Scaffold & Template Repository - Galo Gordon O
