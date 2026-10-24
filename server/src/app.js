@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('./db');
 const apiRoutes = require('./routes/api');
+const authRoutes = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,7 @@ app.use((req, res, next) => {
 
 // API Endpoints
 app.use('/api', apiRoutes);
+app.use('/api/auth', authRoutes);
 
 // Define paths for the 3 compiled frontends
 const pwaPath = path.join(__dirname, '../public/pwa');

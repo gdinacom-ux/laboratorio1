@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import LoginPage from './components/LoginPage';
+import IdempiereInspectorModal from './components/IdempiereInspectorModal';
+import IdempiereDashboardView from './components/IdempiereDashboardView';
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState('overview'); // overview, products, consumers, database
+function AdminDashboard() {
+  const { auth, logout, isInspectorOpen, setIsInspectorOpen } = useAuth();
+  const [activeTab, setActiveTab] = useState('overview'); // overview, products, consumers, database, idempiere
   const [serverHealth, setServerHealth] = useState(null);
   const [products, setProducts] = useState([]);
   const [consumerMetrics, setConsumerMetrics] = useState(null);
@@ -211,7 +216,8 @@ export default function App() {
             { id: 'overview', label: 'Resumen General', icon: '📊' },
             { id: 'products', label: 'Catálogo Hamburguesas', icon: '🍔', badge: products.length },
             { id: 'consumers', label: 'Métricas de Clientes', icon: '👥' },
-            { id: 'database', label: 'Estado Base de Datos', icon: '🗄️' }
+            { id: 'database', label: 'Estado Base de Datos', icon: '🗄️' },
+            { id: 'idempiere', label: 'iDempiere ERP v1', icon: '🛡️', badge: auth?.simulated ? 'Sandbox' : 'Live' }
           ].map(item => (
             <button
               key={item.id}
@@ -237,8 +243,8 @@ export default function App() {
               </div>
               {item.badge !== undefined && (
                 <span style={{
-                  background: activeTab === item.id ? '#d97706' : '#f1f5f9',
-                  color: activeTab === item.id ? 'white' : '#64748b',
+                  background: activeTab === item.id ? '#d97706' : (item.id === 'idempiere' ? (auth?.simulated ? '#f59e0b' : '#10b981') : '#f1f5f9'),
+                  color: (activeTab === item.id || item.id === 'idempiere') ? 'white' : '#64748b',
                   fontSize: '0.72rem',
                   fontWeight: '800',
                   padding: '2px 8px',
@@ -250,6 +256,62 @@ export default function App() {
             </button>
           ))}
         </nav>
+
+        {/* Active ERP User Card in Sidebar */}
+        <div style={{
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '12px',
+          marginBottom: '16px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <span style={{ fontSize: '1.1rem' }}>🛡️</span>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '0.76rem', fontWeight: '800', color: '#0f172a', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                {auth?.userName}
+              </div>
+              <div style={{ fontSize: '0.68rem', color: '#d97706', fontWeight: '700' }}>
+                {auth?.role || 'GardenAdmin'} &bull; Org {auth?.parameters?.organizationId || 11}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+            <button
+              onClick={() => setIsInspectorOpen(true)}
+              style={{
+                flex: 1,
+                padding: '4px 6px',
+                borderRadius: '6px',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                fontSize: '0.68rem',
+                fontWeight: '700',
+                color: '#334155',
+                cursor: 'pointer'
+              }}
+            >
+              Token Info
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('¿Cerrar sesión de iDempiere ERP?')) logout();
+              }}
+              style={{
+                padding: '4px 8px',
+                borderRadius: '6px',
+                border: '1px solid #fecdd3',
+                background: '#fff1f2',
+                fontSize: '0.68rem',
+                fontWeight: '700',
+                color: '#be123c',
+                cursor: 'pointer'
+              }}
+            >
+              Salir
+            </button>
+          </div>
+        </div>
 
         {/* Quick Links to other apps */}
         <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
@@ -315,13 +377,45 @@ export default function App() {
               {activeTab === 'products' && 'Catálogo de Hamburguesas Disponibles'}
               {activeTab === 'consumers' && 'Métricas de Consumidores según Consumo'}
               {activeTab === 'database' && 'Monitor y Salud de Base de Datos'}
+              {activeTab === 'idempiere' && 'Integración iDempiere ERP REST v1'}
             </h1>
             <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '4px' }}>
               Plataforma comercial y operacional de Hamburger Rapid &bull; Dokploy CI/CD Live
             </p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            {/* iDempiere ERP Status Badge */}
+            <div
+              onClick={() => setIsInspectorOpen(true)}
+              style={{
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: auth?.simulated ? '#fffbeb' : '#ecfdf5',
+                border: `1px solid ${auth?.simulated ? '#fde68a' : '#a7f3d0'}`,
+                color: auth?.simulated ? '#92400e' : '#065f46',
+                padding: '6px 14px',
+                borderRadius: '9999px',
+                fontSize: '0.8rem',
+                fontWeight: '700'
+              }}
+              title="Haga clic para inspeccionar sesión y token iDempiere"
+            >
+              <span>🛡️</span>
+              <span>{auth?.userName}</span>
+              <span style={{
+                background: auth?.simulated ? '#d97706' : '#059669',
+                color: 'white',
+                fontSize: '0.68rem',
+                padding: '2px 8px',
+                borderRadius: '9999px'
+              }}>
+                {auth?.role || 'Rol 102'}
+              </span>
+            </div>
+
             {/* DB Status Badge */}
             <div style={{
               display: 'flex',
@@ -330,9 +424,9 @@ export default function App() {
               background: serverHealth?.database?.connected ? '#ecfdf5' : '#fffbeb',
               border: `1px solid ${serverHealth?.database?.connected ? '#a7f3d0' : '#fde68a'}`,
               color: serverHealth?.database?.connected ? '#065f46' : '#92400e',
-              padding: '8px 16px',
+              padding: '6px 14px',
               borderRadius: '9999px',
-              fontSize: '0.82rem',
+              fontSize: '0.8rem',
               fontWeight: '700'
             }}>
               <span>{serverHealth?.database?.connected ? '🐬' : '⚡'}</span>
@@ -346,10 +440,10 @@ export default function App() {
               style={{
                 background: '#ffffff',
                 border: '1px solid #cbd5e1',
-                padding: '8px 14px',
+                padding: '6px 12px',
                 borderRadius: '8px',
                 fontWeight: '700',
-                fontSize: '0.82rem',
+                fontSize: '0.8rem',
                 color: '#334155',
                 cursor: 'pointer',
                 display: 'flex',
@@ -358,6 +452,27 @@ export default function App() {
               }}
             >
               <span>🔄</span> Refrescar
+            </button>
+
+            <button
+              onClick={() => {
+                if (confirm('¿Deseas cerrar la sesión de iDempiere ERP?')) logout();
+              }}
+              style={{
+                background: '#fff1f2',
+                border: '1px solid #fecdd3',
+                color: '#be123c',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontWeight: '700',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>🚪</span> Salir
             </button>
           </div>
         </header>
@@ -953,6 +1068,11 @@ export default function App() {
           </div>
         )}
 
+        {/* ================= VIEW 5: IDEMPIERE ERP REST v1 ================= */}
+        {activeTab === 'idempiere' && (
+          <IdempiereDashboardView />
+        )}
+
       </main>
 
       {/* Modal: Agregar Nueva Hamburguesa */}
@@ -1100,5 +1220,30 @@ export default function App() {
       )}
 
     </div>
+  );
+}
+
+function AppContent() {
+  const { isAuthenticated, isInspectorOpen, setIsInspectorOpen } = useAuth();
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return (
+    <>
+      <AdminDashboard />
+      {isInspectorOpen && (
+        <IdempiereInspectorModal onClose={() => setIsInspectorOpen(false)} />
+      )}
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
