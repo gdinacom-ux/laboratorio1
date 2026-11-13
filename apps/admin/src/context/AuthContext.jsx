@@ -1,80 +1,171 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginViaBackendProxy, loginDirectToIdempiere, DEFAULT_GARDENWORLD_PARAMS } from '../services/idempiereAuthService';
+import {
+  DEFAULT_GARDENWORLD_PARAMS,
+  loginDirect as serviceLoginDirect,
+  requestContextStep1 as serviceRequestContextStep1,
+  completeLoginStep2 as serviceCompleteLoginStep2,
+  saveSession,
+  loadSession,
+  clearSession
+} from '../services/idempiereAuthService';
 
 const AuthContext = createContext(null);
 
-const STORAGE_KEY = 'hamburger_rapid_idempiere_auth';
-
 export function AuthProvider({ children }) {
+  // Inicialización de sesión desde almacenamiento persistente
   const [auth, setAuth] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.warn('Error al leer sesión previa:', e);
-    }
-    return null;
+    return loadSession();
   });
 
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
 
+  // Modalidad de autenticación seleccionada: 'direct' (1 Paso) | 'assisted' (2 Pasos)
+  const [loginMode, setLoginMode] = useState('direct');
+
+  // Modo de conexión & CORS: 'proxy' (Backend Local) | 'corsproxy' (corsproxy.io) | 'direct' (Navegador)
+  const [connectionMode, setConnectionMode] = useState('proxy');
+
+  // URL Base editable de iDempiere
+  const [erpBaseUrl, setErpBaseUrl] = useState(() => {
+    return auth?.erpBaseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl;
+  });
+
+  // Guardar en almacenamiento cada vez que cambie auth
   useEffect(() => {
-    if (auth) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+    if (auth && auth.token) {
+      saveSession(auth);
     } else {
-      localStorage.removeItem(STORAGE_KEY);
+      clearSession();
     }
   }, [auth]);
 
-  const login = async (credentials, mode = 'proxy') => {
+  /**
+   * Construye el objeto unificado de sesión
+   */
+  const buildNormalizedSession = (authData, credentials, connMode) => {
+    const params = authData.parameters || credentials.parameters || {};
+    return {
+      token: authData.token,
+      tokenType: authData.tokenType || 'Bearer',
+      userId: authData.userId || 100,
+      userName: authData.userName || credentials.userName,
+      // Contexto canónico exigido por el negocio
+      clientId: Number(params.clientId ?? 11),
+      roleId: Number(params.roleId ?? 102),
+      organizationId: Number(params.organizationId ?? params.orgId ?? 11),
+      orgId: Number(params.organizationId ?? params.orgId ?? 11), // Compatibilidad
+      warehouseId: Number(params.warehouseId ?? 103),
+      language: params.language || 'en_US',
+      // Metadatos descriptivos
+      clientName: authData.client?.name || 'GardenWorld, Inc.',
+      roleName: authData.role?.name || (params.roleId === 102 ? 'GardenAdmin' : `Rol #${params.roleId}`),
+      orgName: authData.organization?.name || `HQ Org #${params.organizationId || 11}`,
+      warehouseName: authData.warehouse?.name || `Almacén #${params.warehouseId || 103}`,
+      simulated: Boolean(authData.simulated),
+      simulatedReason: authData.simulatedReason,
+      erpBaseUrl: credentials.erpBaseUrl || erpBaseUrl,
+      connectionMode: connMode,
+      parameters: {
+        clientId: Number(params.clientId ?? 11),
+        roleId: Number(params.roleId ?? 102),
+        organizationId: Number(params.organizationId ?? params.orgId ?? 11),
+        warehouseId: Number(params.warehouseId ?? 103),
+        language: params.language || 'en_US'
+      },
+      audit: authData.audit || {
+        endpointCalled: '/api/v1/auth/tokens',
+        connectionMode: connMode,
+        timestamp: new Date().toISOString()
+      },
+      loginTime: new Date().toISOString()
+    };
+  };
+
+  /**
+   * Modalidad 1: Login Directo en 1 Paso
+   */
+  const loginDirect = async (credentials, overrideConnMode) => {
     setIsLoading(true);
     setAuthError(null);
+    const activeMode = overrideConnMode || connectionMode;
 
     try {
-      let authData;
-      if (mode === 'direct') {
-        authData = await loginDirectToIdempiere(credentials);
-      } else {
-        authData = await loginViaBackendProxy(credentials);
-      }
-
-      const session = {
-        token: authData.token,
-        tokenType: authData.tokenType || 'Bearer',
-        userName: authData.userName || credentials.userName,
-        parameters: authData.parameters || credentials.parameters,
-        role: authData.role?.name || (authData.parameters?.roleId === 102 ? 'GardenAdmin' : 'ERP User'),
-        client: authData.client?.name || 'GardenWorld, Inc.',
-        organization: authData.organization?.name || 'HQ - Headquarters',
-        warehouse: authData.warehouse?.name || 'Central Warehouse',
-        simulated: Boolean(authData.simulated),
-        simulatedReason: authData.simulatedReason,
-        audit: authData.audit || {
-          endpointCalled: '/api/v1/auth/tokens',
-          timestamp: new Date().toISOString()
-        },
-        loginTime: new Date().toISOString()
-      };
-
+      const authData = await serviceLoginDirect(credentials, activeMode);
+      const session = buildNormalizedSession(authData, credentials, activeMode);
       setAuth(session);
       setIsLoading(false);
       return { success: true, session };
     } catch (err) {
       setIsLoading(false);
-      const message = err.message || 'Error de autenticación con iDempiere ERP';
+      const message = err.message || 'Error al autenticar con iDempiere ERP';
       setAuthError(message);
       return { success: false, error: message, details: err.details };
     }
   };
 
+  /**
+   * Modalidad 2 (Paso 1): Consulta de Contexto Multitenant
+   */
+  const requestContextStep1 = async (credentials, overrideConnMode) => {
+    setIsLoading(true);
+    setAuthError(null);
+    const activeMode = overrideConnMode || connectionMode;
+
+    try {
+      const result = await serviceRequestContextStep1(credentials, activeMode);
+      setIsLoading(false);
+
+      // Si ya vino autenticado en el paso 1
+      if (result.alreadyAuthenticated && result.token) {
+        const session = buildNormalizedSession(result, credentials, activeMode);
+        setAuth(session);
+        return { success: true, authenticated: true, session };
+      }
+
+      return { success: true, authenticated: false, contextData: result };
+    } catch (err) {
+      setIsLoading(false);
+      const message = err.message || 'Error al consultar contexto multitenant';
+      setAuthError(message);
+      return { success: false, error: message };
+    }
+  };
+
+  /**
+   * Modalidad 2 (Paso 2): Confirmación de Contexto y Emisión de Token
+   */
+  const completeLoginStep2 = async (credentials, selectedContext, overrideConnMode) => {
+    setIsLoading(true);
+    setAuthError(null);
+    const activeMode = overrideConnMode || connectionMode;
+
+    try {
+      const authData = await serviceCompleteLoginStep2(credentials, selectedContext, activeMode);
+      const session = buildNormalizedSession(
+        authData,
+        { ...credentials, parameters: selectedContext },
+        activeMode
+      );
+      setAuth(session);
+      setIsLoading(false);
+      return { success: true, session };
+    } catch (err) {
+      setIsLoading(false);
+      const message = err.message || 'Error al completar inicio de sesión en iDempiere';
+      setAuthError(message);
+      return { success: false, error: message };
+    }
+  };
+
+  /**
+   * Cierre de sesión y purga de almacenamiento local
+   */
   const logout = () => {
     setAuth(null);
     setAuthError(null);
-    localStorage.removeItem(STORAGE_KEY);
+    clearSession();
   };
 
   const value = {
@@ -83,7 +174,15 @@ export function AuthProvider({ children }) {
     isLoading,
     authError,
     setAuthError,
-    login,
+    loginMode,
+    setLoginMode,
+    connectionMode,
+    setConnectionMode,
+    erpBaseUrl,
+    setErpBaseUrl,
+    loginDirect,
+    requestContextStep1,
+    completeLoginStep2,
     logout,
     isInspectorOpen,
     setIsInspectorOpen,

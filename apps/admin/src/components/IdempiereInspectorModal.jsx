@@ -143,15 +143,15 @@ export default function IdempiereInspectorModal({ onClose }) {
             </div>
             <div>
               <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Client ID:</div>
-              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.clientId} ({auth.client || 'GardenWorld'})</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.clientId || auth.clientId || 11} ({auth.clientName || (typeof auth.client === 'string' ? auth.client : auth.client?.name) || 'GardenWorld'})</div>
             </div>
             <div>
               <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Role ID:</div>
-              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.roleId} ({auth.role || 'GardenAdmin'})</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.roleId || auth.roleId || 102} ({auth.roleName || (typeof auth.role === 'string' ? auth.role : auth.role?.name) || 'GardenAdmin'})</div>
             </div>
             <div>
               <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Organization ID:</div>
-              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.organizationId} ({auth.organization || 'HQ'})</div>
+              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#d97706' }}>{auth.parameters?.organizationId || auth.organizationId || 11} ({auth.orgName || (typeof auth.organization === 'string' ? auth.organization : auth.organization?.name) || 'HQ'})</div>
             </div>
             <div>
               <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700' }}>Warehouse ID:</div>

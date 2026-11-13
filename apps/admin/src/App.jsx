@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import AuthGuard from './components/AuthGuard';
 import LoginPage from './components/LoginPage';
 import IdempiereInspectorModal from './components/IdempiereInspectorModal';
 import IdempiereDashboardView from './components/IdempiereDashboardView';
+import OrdersManagementView from './components/OrdersManagementView';
 
 function AdminDashboard() {
   const { auth, logout, isInspectorOpen, setIsInspectorOpen } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview'); // overview, products, consumers, database, idempiere
+  const [activeTab, setActiveTab] = useState('overview'); // overview, orders, products, consumers, database, idempiere
   const [serverHealth, setServerHealth] = useState(null);
   const [products, setProducts] = useState([]);
   const [consumerMetrics, setConsumerMetrics] = useState(null);
@@ -214,6 +216,7 @@ function AdminDashboard() {
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
           {[
             { id: 'overview', label: 'Resumen General', icon: '📊' },
+            { id: 'orders', label: 'Gestión de Pedidos', icon: '📦', badge: orders.length },
             { id: 'products', label: 'Catálogo Hamburguesas', icon: '🍔', badge: products.length },
             { id: 'consumers', label: 'Métricas de Clientes', icon: '👥' },
             { id: 'database', label: 'Estado Base de Datos', icon: '🗄️' },
@@ -257,7 +260,7 @@ function AdminDashboard() {
           ))}
         </nav>
 
-        {/* Active ERP User Card in Sidebar */}
+        {/* Active ERP User Card in Sidebar - Contexto de Sesión Completo */}
         <div style={{
           background: '#f8fafc',
           border: '1px solid #e2e8f0',
@@ -266,22 +269,28 @@ function AdminDashboard() {
           marginBottom: '16px'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-            <span style={{ fontSize: '1.1rem' }}>🛡️</span>
+            <span style={{ fontSize: '1.2rem' }}>🛡️</span>
             <div style={{ overflow: 'hidden' }}>
-              <div style={{ fontSize: '0.76rem', fontWeight: '800', color: '#0f172a', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 {auth?.userName}
               </div>
               <div style={{ fontSize: '0.68rem', color: '#d97706', fontWeight: '700' }}>
-                {auth?.role || 'GardenAdmin'} &bull; Org {auth?.parameters?.organizationId || 11}
+                {auth?.roleName || auth?.role?.name || (auth?.parameters?.roleId === 102 ? 'GardenAdmin' : `Rol #${auth?.parameters?.roleId}`)}
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+          
+          <div style={{ fontSize: '0.66rem', color: '#64748b', lineHeight: 1.3, marginBottom: '8px' }}>
+            <div>🏢 {auth?.clientName || auth?.client?.name || `Client #${auth?.clientId || 11}`}</div>
+            <div>📍 Org {auth?.organizationId || auth?.orgId || 11} &bull; Wh {auth?.warehouseId || 103}</div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px' }}>
             <button
               onClick={() => setIsInspectorOpen(true)}
               style={{
                 flex: 1,
-                padding: '4px 6px',
+                padding: '5px 6px',
                 borderRadius: '6px',
                 border: '1px solid #cbd5e1',
                 background: '#ffffff',
@@ -295,10 +304,10 @@ function AdminDashboard() {
             </button>
             <button
               onClick={() => {
-                if (confirm('¿Cerrar sesión de iDempiere ERP?')) logout();
+                if (confirm('¿Cerrar sesión de iDempiere ERP y regresar al login?')) logout();
               }}
               style={{
-                padding: '4px 8px',
+                padding: '5px 10px',
                 borderRadius: '6px',
                 border: '1px solid #fecdd3',
                 background: '#fff1f2',
@@ -308,7 +317,7 @@ function AdminDashboard() {
                 cursor: 'pointer'
               }}
             >
-              Salir
+              Cerrar Sesión
             </button>
           </div>
         </div>
@@ -374,6 +383,7 @@ function AdminDashboard() {
           <div>
             <h1 style={{ fontSize: '1.85rem', fontWeight: '800', color: '#0f172a', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
               {activeTab === 'overview' && 'Panel de Control & Indicadores'}
+              {activeTab === 'orders' && 'Bandeja de Pedidos: PWA Preventa vs E-commerce'}
               {activeTab === 'products' && 'Catálogo de Hamburguesas Disponibles'}
               {activeTab === 'consumers' && 'Métricas de Consumidores según Consumo'}
               {activeTab === 'database' && 'Monitor y Salud de Base de Datos'}
@@ -677,6 +687,15 @@ function AdminDashboard() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ================= VIEW: ORDERS MANAGEMENT (PWA vs E-COMMERCE) ================= */}
+        {activeTab === 'orders' && (
+          <OrdersManagementView
+            orders={orders}
+            onReloadOrders={loadAllData}
+            showNotification={showNotification}
+          />
         )}
 
         {/* ================= VIEW 2: PRODUCTS ================= */}
@@ -1224,19 +1243,15 @@ function AdminDashboard() {
 }
 
 function AppContent() {
-  const { isAuthenticated, isInspectorOpen, setIsInspectorOpen } = useAuth();
-
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
+  const { isInspectorOpen, setIsInspectorOpen } = useAuth();
 
   return (
-    <>
+    <AuthGuard>
       <AdminDashboard />
       {isInspectorOpen && (
         <IdempiereInspectorModal onClose={() => setIsInspectorOpen(false)} />
       )}
-    </>
+    </AuthGuard>
   );
 }
 

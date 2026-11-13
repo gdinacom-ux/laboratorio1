@@ -3,16 +3,28 @@ import { useAuth } from '../context/AuthContext';
 import { DEFAULT_GARDENWORLD_PARAMS } from '../services/idempiereAuthService';
 
 export default function LoginPage() {
-  const { login, isLoading, authError, setAuthError } = useAuth();
+  const {
+    loginDirect,
+    requestContextStep1,
+    completeLoginStep2,
+    isLoading,
+    authError,
+    setAuthError,
+    loginMode,
+    setLoginMode,
+    connectionMode,
+    setConnectionMode,
+    erpBaseUrl,
+    setErpBaseUrl
+  } = useAuth();
 
   // Form State
   const [userName, setUserName] = useState(DEFAULT_GARDENWORLD_PARAMS.userName);
   const [password, setPassword] = useState(DEFAULT_GARDENWORLD_PARAMS.password);
   const [showPassword, setShowPassword] = useState(false);
   const [showAdvancedParams, setShowAdvancedParams] = useState(false);
-  const [connectionMode, setConnectionMode] = useState('proxy'); // 'proxy' | 'direct'
 
-  // Context Parameters (REGLA ESTRICTA B: OBLIGATORIO organizationId)
+  // Parámetros de contexto para Modalidad 1 (REGLA ESTRICTA: organizationId)
   const [parameters, setParameters] = useState({
     clientId: DEFAULT_GARDENWORLD_PARAMS.parameters.clientId,
     roleId: DEFAULT_GARDENWORLD_PARAMS.parameters.roleId,
@@ -21,9 +33,20 @@ export default function LoginPage() {
     language: DEFAULT_GARDENWORLD_PARAMS.parameters.language
   });
 
-  const [erpBaseUrl, setErpBaseUrl] = useState(DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl);
+  // Estado para Modalidad 2 (2 Pasos)
+  const [currentStep, setCurrentStep] = useState(1); // 1 = Credenciales, 2 = Selección de Contexto
+  const [availableContext, setAvailableContext] = useState(null);
+  const [selectedContext, setSelectedContext] = useState({
+    clientId: 11,
+    roleId: 102,
+    organizationId: 11,
+    warehouseId: 103,
+    language: 'en_US'
+  });
+
   const [errorDetails, setErrorDetails] = useState(null);
 
+  // Cambios en parámetros manuales (Modalidad 1)
   const handleParamChange = (field, value) => {
     setParameters(prev => ({
       ...prev,
@@ -31,22 +54,41 @@ export default function LoginPage() {
     }));
   };
 
+  // Botón "Cargar Demo GardenWorld"
   const handleFillDemo = (e) => {
     e?.preventDefault();
     setUserName(DEFAULT_GARDENWORLD_PARAMS.userName);
     setPassword(DEFAULT_GARDENWORLD_PARAMS.password);
     setParameters({ ...DEFAULT_GARDENWORLD_PARAMS.parameters });
+    setSelectedContext({ ...DEFAULT_GARDENWORLD_PARAMS.parameters });
     setErpBaseUrl(DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl);
     setAuthError(null);
     setErrorDetails(null);
+    setCurrentStep(1);
+    setAvailableContext(null);
   };
 
-  const handleSubmit = async (e) => {
+  // Login Rápido 1-Clic
+  const handleQuickDemoLogin = async () => {
+    handleFillDemo();
+    await loginDirect(
+      {
+        userName: DEFAULT_GARDENWORLD_PARAMS.userName,
+        password: DEFAULT_GARDENWORLD_PARAMS.password,
+        parameters: DEFAULT_GARDENWORLD_PARAMS.parameters,
+        erpBaseUrl: DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl
+      },
+      connectionMode
+    );
+  };
+
+  // Envío Formulario Modalidad 1 (Login Directo en 1 Paso)
+  const handleSubmitModalidad1 = async (e) => {
     e.preventDefault();
     setAuthError(null);
     setErrorDetails(null);
 
-    const result = await login(
+    const result = await loginDirect(
       {
         userName,
         password,
@@ -61,16 +103,42 @@ export default function LoginPage() {
     }
   };
 
-  const handleQuickDemoLogin = async () => {
-    handleFillDemo();
-    await login(
-      {
-        userName: DEFAULT_GARDENWORLD_PARAMS.userName,
-        password: DEFAULT_GARDENWORLD_PARAMS.password,
-        parameters: DEFAULT_GARDENWORLD_PARAMS.parameters,
-        erpBaseUrl: DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl
-      },
-      'proxy'
+  // Modalidad 2: Paso 1 (Consultar Contexto Multitenant)
+  const handleStep1Submit = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+    setErrorDetails(null);
+
+    const result = await requestContextStep1(
+      { userName, password, erpBaseUrl },
+      connectionMode
+    );
+
+    if (result.success && !result.authenticated) {
+      const data = result.contextData;
+      setAvailableContext(data);
+      // Auto-seleccionar primer elemento disponible
+      setSelectedContext({
+        clientId: data.clients?.[0]?.id ?? 11,
+        roleId: data.roles?.[0]?.id ?? 102,
+        organizationId: data.organizations?.[0]?.id ?? 11,
+        warehouseId: data.warehouses?.[0]?.id ?? 103,
+        language: data.languages?.[0]?.id ?? 'en_US'
+      });
+      setCurrentStep(2);
+    }
+  };
+
+  // Modalidad 2: Paso 2 (Confirmar Contexto y Obtener Token)
+  const handleStep2Submit = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+    setErrorDetails(null);
+
+    await completeLoginStep2(
+      { userName, password, erpBaseUrl },
+      selectedContext,
+      connectionMode
     );
   };
 
@@ -83,9 +151,10 @@ export default function LoginPage() {
       background: 'radial-gradient(circle at 50% 20%, #1e1e28 0%, #0d0e12 100%)',
       padding: '24px',
       position: 'relative',
-      overflow: 'hidden'
+      overflow: 'hidden',
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
-      {/* Background Decorative Rings */}
+      {/* Background Glows */}
       <div style={{
         position: 'absolute',
         top: '-15%',
@@ -110,8 +179,8 @@ export default function LoginPage() {
       {/* Main Card */}
       <div style={{
         width: '100%',
-        maxWidth: '520px',
-        background: 'rgba(25, 27, 34, 0.88)',
+        maxWidth: '560px',
+        background: 'rgba(25, 27, 34, 0.92)',
         backdropFilter: 'blur(16px)',
         borderRadius: '24px',
         border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -120,8 +189,8 @@ export default function LoginPage() {
         position: 'relative',
         zIndex: 1
       }}>
-        {/* Header with Logo */}
-        <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '22px' }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -132,7 +201,7 @@ export default function LoginPage() {
             background: 'linear-gradient(135deg, #d97706, #ea580c)',
             fontSize: '2rem',
             boxShadow: '0 10px 25px rgba(217, 119, 6, 0.35)',
-            marginBottom: '16px'
+            marginBottom: '14px'
           }}>
             🍔
           </div>
@@ -154,7 +223,7 @@ export default function LoginPage() {
             background: 'rgba(217, 119, 6, 0.15)',
             border: '1px solid rgba(217, 119, 6, 0.3)',
             borderRadius: '9999px',
-            padding: '4px 12px',
+            padding: '4px 14px',
             color: '#fbbf24',
             fontSize: '0.74rem',
             fontWeight: '700',
@@ -167,20 +236,20 @@ export default function LoginPage() {
           <p style={{
             color: '#94a3b8',
             fontSize: '0.82rem',
-            marginTop: '10px',
+            marginTop: '8px',
             lineHeight: 1.4
           }}>
-            Acceso administrativo corporativo conectado mediante tokens REST API v1.
+            Autenticación directa de usuarios con credenciales activas en iDempiere ERP.
           </p>
         </div>
 
         {/* Technical Directive Badge (Blindaje iDempiere v1) */}
         <div style={{
-          background: 'rgba(15, 23, 42, 0.6)',
+          background: 'rgba(15, 23, 42, 0.65)',
           border: '1px solid rgba(255, 255, 255, 0.06)',
           borderRadius: '12px',
           padding: '10px 14px',
-          marginBottom: '22px',
+          marginBottom: '18px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -195,32 +264,220 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Fast Demo One-Click Access Button */}
-        <button
-          type="button"
-          onClick={handleQuickDemoLogin}
-          disabled={isLoading}
-          style={{
-            width: '100%',
-            padding: '11px 16px',
-            background: 'linear-gradient(135deg, rgba(217, 119, 6, 0.2), rgba(234, 88, 12, 0.15))',
-            border: '1px dashed #d97706',
-            borderRadius: '12px',
-            color: '#fef3c7',
-            fontWeight: '700',
-            fontSize: '0.82rem',
-            cursor: isLoading ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            marginBottom: '22px',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          <span>⚡</span>
-          <span>Acceso Rápido 1-Clic: Demo GardenWorld Admin</span>
-        </button>
+        {/* Conectividad y CORS Toolbar */}
+        <div style={{
+          background: 'rgba(15, 23, 42, 0.75)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRadius: '14px',
+          padding: '14px',
+          marginBottom: '20px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase' }}>
+              🌐 Conexión &amp; Proxy CORS
+            </label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button
+                type="button"
+                onClick={() => setErpBaseUrl('https://test.idempiere.org:443')}
+                style={{
+                  background: erpBaseUrl === 'https://test.idempiere.org:443' ? '#d97706' : '#1e293b',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: '0.68rem',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                GardenWorld Live
+              </button>
+              <button
+                type="button"
+                onClick={() => setErpBaseUrl('http://localhost:8080')}
+                style={{
+                  background: erpBaseUrl === 'http://localhost:8080' ? '#d97706' : '#1e293b',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: '0.68rem',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Localhost :8080
+              </button>
+            </div>
+          </div>
+
+          {/* Editable Base URL */}
+          <div style={{ marginBottom: '10px' }}>
+            <input
+              type="text"
+              value={erpBaseUrl}
+              onChange={(e) => setErpBaseUrl(e.target.value)}
+              placeholder="https://test.idempiere.org:443"
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: '#0d0e12',
+                border: '1px solid #334155',
+                borderRadius: '8px',
+                color: '#38bdf8',
+                fontSize: '0.82rem',
+                fontFamily: 'monospace'
+              }}
+            />
+          </div>
+
+          {/* Connection Mode Selector */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+            <button
+              type="button"
+              onClick={() => setConnectionMode('proxy')}
+              style={{
+                padding: '6px 8px',
+                borderRadius: '8px',
+                border: 'none',
+                background: connectionMode === 'proxy' ? '#d97706' : '#1e293b',
+                color: 'white',
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                cursor: 'pointer'
+              }}
+              title="Recomendado: Evita bloqueos de CORS y gestiona contingencia con el backend"
+            >
+              🛡️ Proxy Local (Rec.)
+            </button>
+            <button
+              type="button"
+              onClick={() => setConnectionMode('corsproxy')}
+              style={{
+                padding: '6px 8px',
+                borderRadius: '8px',
+                border: 'none',
+                background: connectionMode === 'corsproxy' ? '#d97706' : '#1e293b',
+                color: 'white',
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                cursor: 'pointer'
+              }}
+              title="Vía corsproxy.io para pruebas directas en navegador sin CORS en ERP"
+            >
+              🌍 CORS Proxy IO
+            </button>
+            <button
+              type="button"
+              onClick={() => setConnectionMode('direct')}
+              style={{
+                padding: '6px 8px',
+                borderRadius: '8px',
+                border: 'none',
+                background: connectionMode === 'direct' ? '#d97706' : '#1e293b',
+                color: 'white',
+                fontSize: '0.7rem',
+                fontWeight: '700',
+                cursor: 'pointer'
+              }}
+              title="Conexión HTTP/HTTPS directa desde el navegador"
+            >
+              ⚡ REST Directo
+            </button>
+          </div>
+        </div>
+
+        {/* Modalidad Switcher Tabs */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          background: 'rgba(15, 23, 42, 0.8)',
+          borderRadius: '12px',
+          padding: '4px',
+          marginBottom: '20px'
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              setLoginMode('direct');
+              setCurrentStep(1);
+            }}
+            style={{
+              padding: '10px 12px',
+              borderRadius: '9px',
+              border: 'none',
+              background: loginMode === 'direct' ? 'linear-gradient(135deg, #d97706, #b45309)' : 'transparent',
+              color: loginMode === 'direct' ? '#ffffff' : '#94a3b8',
+              fontWeight: '800',
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            ⚡ Modalidad 1: 1 Paso (Directo)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLoginMode('assisted');
+              setCurrentStep(1);
+            }}
+            style={{
+              padding: '10px 12px',
+              borderRadius: '9px',
+              border: 'none',
+              background: loginMode === 'assisted' ? 'linear-gradient(135deg, #d97706, #b45309)' : 'transparent',
+              color: loginMode === 'assisted' ? '#ffffff' : '#94a3b8',
+              fontWeight: '800',
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            🏢 Modalidad 2: 2 Pasos (Multitenant)
+          </button>
+        </div>
+
+        {/* Botón Cargar Demo GardenWorld */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+          <button
+            type="button"
+            onClick={handleFillDemo}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              background: 'rgba(217, 119, 6, 0.15)',
+              border: '1px solid rgba(217, 119, 6, 0.4)',
+              borderRadius: '10px',
+              color: '#fef3c7',
+              fontWeight: '700',
+              fontSize: '0.78rem',
+              cursor: 'pointer'
+            }}
+          >
+            📋 Cargar Demo GardenWorld
+          </button>
+          <button
+            type="button"
+            onClick={handleQuickDemoLogin}
+            disabled={isLoading}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              background: 'linear-gradient(135deg, #d97706, #ea580c)',
+              border: 'none',
+              borderRadius: '10px',
+              color: '#ffffff',
+              fontWeight: '800',
+              fontSize: '0.78rem',
+              cursor: isLoading ? 'wait' : 'pointer',
+              boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)'
+            }}
+          >
+            ⚡ Acceso Rápido 1-Clic
+          </button>
+        </div>
 
         {/* Error Notification Alert */}
         {authError && (
@@ -229,7 +486,7 @@ export default function LoginPage() {
             border: '1px solid rgba(239, 68, 68, 0.35)',
             borderRadius: '12px',
             padding: '12px 14px',
-            marginBottom: '20px',
+            marginBottom: '18px',
             color: '#fca5a5',
             fontSize: '0.8rem',
             lineHeight: 1.4
@@ -254,20 +511,15 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Main Authentication Form */}
-        <form onSubmit={handleSubmit}>
-          {/* Username Field */}
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{
-              display: 'block',
-              color: '#cbd5e1',
-              fontSize: '0.78rem',
-              fontWeight: '700',
-              marginBottom: '6px'
-            }}>
-              Usuario iDempiere (userName):
-            </label>
-            <div style={{ position: 'relative' }}>
+        {/* ========================================================= */}
+        {/* FORMULARIO MODALIDAD 1: LOGIN DIRECTO (1 PASO)            */}
+        {/* ========================================================= */}
+        {loginMode === 'direct' && (
+          <form onSubmit={handleSubmitModalidad1}>
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.78rem', fontWeight: '700', marginBottom: '6px' }}>
+                Usuario iDempiere (userName):
+              </label>
               <input
                 type="text"
                 required
@@ -282,296 +534,407 @@ export default function LoginPage() {
                   borderRadius: '10px',
                   color: '#ffffff',
                   fontSize: '0.88rem',
-                  outline: 'none',
-                  transition: 'border-color 0.2s'
+                  outline: 'none'
                 }}
               />
             </div>
-          </div>
 
-          {/* Password Field */}
-          <div style={{ marginBottom: '18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label style={{
-                color: '#cbd5e1',
-                fontSize: '0.78rem',
-                fontWeight: '700'
-              }}>
-                Contraseña (password):
-              </label>
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ color: '#cbd5e1', fontSize: '0.78rem', fontWeight: '700' }}>
+                  Contraseña (password):
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.72rem', cursor: 'pointer', padding: 0 }}
+                >
+                  {showPassword ? 'Ocultar' : 'Mostrar'}
+                </button>
+              </div>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="GardenAdmin"
+                style={{
+                  width: '100%',
+                  padding: '12px 14px',
+                  background: 'rgba(15, 23, 42, 0.65)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '10px',
+                  color: '#ffffff',
+                  fontSize: '0.88rem',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            {/* Acordeón de Parámetros Fijos (parameters) */}
+            <div style={{ marginBottom: '18px' }}>
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
+                onClick={() => setShowAdvancedParams(!showAdvancedParams)}
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: '#94a3b8',
-                  fontSize: '0.72rem',
+                  color: '#f59e0b',
+                  fontSize: '0.76rem',
+                  fontWeight: '700',
                   cursor: 'pointer',
-                  padding: 0
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 0'
                 }}
               >
-                {showPassword ? 'Ocultar' : 'Mostrar'}
+                <span>{showAdvancedParams ? '▼' : '▶'}</span>
+                <span>Parámetros de Contexto ERP iDempiere (parameters object)</span>
               </button>
+
+              {showAdvancedParams && (
+                <div style={{
+                  marginTop: '10px',
+                  background: 'rgba(15, 23, 42, 0.75)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '10px'
+                }}>
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Client ID (clientId):
+                    </label>
+                    <input
+                      type="number"
+                      value={parameters.clientId}
+                      onChange={(e) => handleParamChange('clientId', e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '6px', color: 'white', fontSize: '0.8rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Role ID (roleId):
+                    </label>
+                    <input
+                      type="number"
+                      value={parameters.roleId}
+                      onChange={(e) => handleParamChange('roleId', e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '6px', color: 'white', fontSize: '0.8rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#38bdf8', fontWeight: '800', display: 'block', marginBottom: '4px' }}>
+                      Organization ID (organizationId):
+                    </label>
+                    <input
+                      type="number"
+                      value={parameters.organizationId}
+                      onChange={(e) => handleParamChange('organizationId', e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #0284c7', borderRadius: '6px', color: '#38bdf8', fontSize: '0.8rem', fontWeight: '700' }}
+                    />
+                    <span style={{ fontSize: '0.62rem', color: '#64748b' }}>* Campo v1 (no orgId)</span>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Warehouse ID (warehouseId):
+                    </label>
+                    <input
+                      type="number"
+                      value={parameters.warehouseId}
+                      onChange={(e) => handleParamChange('warehouseId', e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '6px', color: 'white', fontSize: '0.8rem' }}
+                    />
+                  </div>
+
+                  <div style={{ gridColumn: 'span 2' }}>
+                    <label style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Idioma (language):
+                    </label>
+                    <select
+                      value={parameters.language}
+                      onChange={(e) => handleParamChange('language', e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '6px', color: 'white', fontSize: '0.8rem' }}
+                    >
+                      <option value="en_US">en_US (Inglés Americano)</option>
+                      <option value="es_ES">es_ES (Español)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="GardenAdmin"
+
+            <button
+              type="submit"
+              disabled={isLoading}
               style={{
                 width: '100%',
-                padding: '12px 14px',
-                background: 'rgba(15, 23, 42, 0.65)',
-                border: '1px solid rgba(255, 255, 255, 0.12)',
-                borderRadius: '10px',
-                color: '#ffffff',
-                fontSize: '0.88rem',
-                outline: 'none'
-              }}
-            />
-          </div>
-
-          {/* Toggle Advanced ERP Parameters Accordion */}
-          <div style={{ marginBottom: '18px' }}>
-            <button
-              type="button"
-              onClick={() => setShowAdvancedParams(!showAdvancedParams)}
-              style={{
-                background: 'none',
+                padding: '14px',
+                borderRadius: '12px',
                 border: 'none',
-                color: '#f59e0b',
-                fontSize: '0.78rem',
-                fontWeight: '700',
-                cursor: 'pointer',
+                background: isLoading ? '#475569' : 'linear-gradient(135deg, #d97706, #ea580c)',
+                color: '#ffffff',
+                fontWeight: '800',
+                fontSize: '0.95rem',
+                cursor: isLoading ? 'wait' : 'pointer',
+                boxShadow: '0 8px 24px rgba(217, 119, 6, 0.35)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                padding: '4px 0'
+                justifyContent: 'center',
+                gap: '8px'
               }}
             >
-              <span>{showAdvancedParams ? '▼' : '▶'}</span>
-              <span>Parámetros de Contexto ERP iDempiere (parameters object)</span>
+              {isLoading ? '⏳ Autenticando en iDempiere...' : '🔐 Ingresar al Panel (1 Paso)'}
             </button>
+          </form>
+        )}
 
-            {showAdvancedParams && (
+        {/* ========================================================= */}
+        {/* FORMULARIO MODALIDAD 2: LOGIN ASISTIDO EN 2 PASOS          */}
+        {/* ========================================================= */}
+        {loginMode === 'assisted' && (
+          <div>
+            {/* Step Indicator */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
               <div style={{
-                marginTop: '12px',
-                background: 'rgba(15, 23, 42, 0.75)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '14px',
-                padding: '16px',
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '12px'
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: currentStep === 1 ? '#d97706' : '#1e293b',
+                color: 'white',
+                fontSize: '0.74rem',
+                fontWeight: '800',
+                textAlign: 'center'
               }}>
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
-                    Client ID (clientId):
-                  </label>
-                  <input
-                    type="number"
-                    value={parameters.clientId}
-                    onChange={(e) => handleParamChange('clientId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #334155',
-                      borderRadius: '8px',
-                      color: 'white',
-                      fontSize: '0.82rem'
-                    }}
-                  />
-                </div>
+                1. Validar Credenciales
+              </div>
+              <div style={{
+                flex: 1,
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: currentStep === 2 ? '#d97706' : '#1e293b',
+                color: 'white',
+                fontSize: '0.74rem',
+                fontWeight: '800',
+                textAlign: 'center'
+              }}>
+                2. Elegir Contexto
+              </div>
+            </div>
 
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
-                    Role ID (roleId):
-                  </label>
-                  <input
-                    type="number"
-                    value={parameters.roleId}
-                    onChange={(e) => handleParamChange('roleId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #334155',
-                      borderRadius: '8px',
-                      color: 'white',
-                      fontSize: '0.82rem'
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: '800', display: 'block', marginBottom: '4px' }}>
-                    Organization ID (organizationId):
-                  </label>
-                  <input
-                    type="number"
-                    value={parameters.organizationId}
-                    onChange={(e) => handleParamChange('organizationId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #0284c7',
-                      borderRadius: '8px',
-                      color: '#38bdf8',
-                      fontSize: '0.82rem',
-                      fontWeight: '700'
-                    }}
-                  />
-                  <span style={{ fontSize: '0.65rem', color: '#64748b' }}>* Campo estricto v1 (no orgId)</span>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
-                    Warehouse ID (warehouseId):
-                  </label>
-                  <input
-                    type="number"
-                    value={parameters.warehouseId}
-                    onChange={(e) => handleParamChange('warehouseId', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #334155',
-                      borderRadius: '8px',
-                      color: 'white',
-                      fontSize: '0.82rem'
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
-                    Idioma (language):
-                  </label>
-                  <select
-                    value={parameters.language}
-                    onChange={(e) => handleParamChange('language', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #334155',
-                      borderRadius: '8px',
-                      color: 'white',
-                      fontSize: '0.82rem'
-                    }}
-                  >
-                    <option value="en_US">en_US (Inglés)</option>
-                    <option value="es_ES">es_ES (Español)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
-                    URL Base Servidor ERP:
+            {currentStep === 1 ? (
+              <form onSubmit={handleStep1Submit}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.78rem', fontWeight: '700', marginBottom: '6px' }}>
+                    Usuario iDempiere:
                   </label>
                   <input
                     type="text"
-                    value={erpBaseUrl}
-                    onChange={(e) => setErpBaseUrl(e.target.value)}
-                    placeholder="http://localhost:8080"
+                    required
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    placeholder="admin @ gardenworld.com"
                     style={{
                       width: '100%',
-                      padding: '8px 10px',
-                      background: '#0d0e12',
-                      border: '1px solid #334155',
-                      borderRadius: '8px',
-                      color: 'white',
-                      fontSize: '0.82rem'
+                      padding: '12px 14px',
+                      background: 'rgba(15, 23, 42, 0.65)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      borderRadius: '10px',
+                      color: '#ffffff',
+                      fontSize: '0.88rem',
+                      outline: 'none'
                     }}
                   />
                 </div>
 
-                <div style={{ gridColumn: 'span 2', display: 'flex', gap: '10px', marginTop: '4px' }}>
+                <div style={{ marginBottom: '18px' }}>
+                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.78rem', fontWeight: '700', marginBottom: '6px' }}>
+                    Contraseña:
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="GardenAdmin"
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      background: 'rgba(15, 23, 42, 0.65)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      borderRadius: '10px',
+                      color: '#ffffff',
+                      fontSize: '0.88rem',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: isLoading ? '#475569' : 'linear-gradient(135deg, #d97706, #ea580c)',
+                    color: '#ffffff',
+                    fontWeight: '800',
+                    fontSize: '0.95rem',
+                    cursor: isLoading ? 'wait' : 'pointer',
+                    boxShadow: '0 8px 24px rgba(217, 119, 6, 0.35)'
+                  }}
+                >
+                  {isLoading ? '⏳ Consultando iDempiere...' : '🔍 Consultar Roles y Organizaciones (Paso 1)'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleStep2Submit}>
+                <div style={{
+                  background: 'rgba(15, 23, 42, 0.75)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '14px',
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  marginBottom: '18px'
+                }}>
+                  <div style={{ fontSize: '0.78rem', color: '#10b981', fontWeight: '700' }}>
+                    ✓ Usuario "{userName}" verificado. Seleccione el contexto de sesión:
+                  </div>
+
+                  {/* Tenant / Cliente */}
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Empresa / Tenant (Client):
+                    </label>
+                    <select
+                      value={selectedContext.clientId}
+                      onChange={(e) => setSelectedContext(prev => ({ ...prev, clientId: Number(e.target.value) }))}
+                      style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '0.82rem' }}
+                    >
+                      {availableContext?.clients?.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} (#{c.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Rol */}
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Rol Asignado (Role):
+                    </label>
+                    <select
+                      value={selectedContext.roleId}
+                      onChange={(e) => setSelectedContext(prev => ({ ...prev, roleId: Number(e.target.value) }))}
+                      style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '0.82rem' }}
+                    >
+                      {availableContext?.roles?.map(r => (
+                        <option key={r.id} value={r.id}>{r.name} (#{r.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Organización */}
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: '800', display: 'block', marginBottom: '4px' }}>
+                      Organización / Sucursal (organizationId):
+                    </label>
+                    <select
+                      value={selectedContext.organizationId}
+                      onChange={(e) => setSelectedContext(prev => ({ ...prev, organizationId: Number(e.target.value) }))}
+                      style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #0284c7', borderRadius: '8px', color: '#38bdf8', fontSize: '0.82rem', fontWeight: '700' }}
+                    >
+                      {availableContext?.organizations?.map(o => (
+                        <option key={o.id} value={o.id}>{o.name} (#{o.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Almacén */}
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Almacén de Despacho (Warehouse):
+                    </label>
+                    <select
+                      value={selectedContext.warehouseId}
+                      onChange={(e) => setSelectedContext(prev => ({ ...prev, warehouseId: Number(e.target.value) }))}
+                      style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '0.82rem' }}
+                    >
+                      {availableContext?.warehouses?.map(w => (
+                        <option key={w.id} value={w.id}>{w.name} (#{w.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Idioma */}
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: '#94a3b8', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                      Idioma:
+                    </label>
+                    <select
+                      value={selectedContext.language}
+                      onChange={(e) => setSelectedContext(prev => ({ ...prev, language: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '0.82rem' }}
+                    >
+                      <option value="en_US">en_US (Inglés)</option>
+                      <option value="es_ES">es_ES (Español)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     type="button"
-                    onClick={() => setConnectionMode('proxy')}
+                    onClick={() => setCurrentStep(1)}
                     style={{
-                      flex: 1,
-                      padding: '6px 10px',
-                      fontSize: '0.72rem',
+                      padding: '14px 18px',
+                      borderRadius: '12px',
+                      border: '1px solid #475569',
+                      background: 'transparent',
+                      color: '#cbd5e1',
                       fontWeight: '700',
-                      borderRadius: '6px',
-                      border: 'none',
-                      background: connectionMode === 'proxy' ? '#d97706' : '#1e293b',
-                      color: 'white',
+                      fontSize: '0.85rem',
                       cursor: 'pointer'
                     }}
                   >
-                    Vía Proxy Backend (Seguro)
+                    ← Volver
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setConnectionMode('direct')}
+                    type="submit"
+                    disabled={isLoading}
                     style={{
                       flex: 1,
-                      padding: '6px 10px',
-                      fontSize: '0.72rem',
-                      fontWeight: '700',
-                      borderRadius: '6px',
+                      padding: '14px',
+                      borderRadius: '12px',
                       border: 'none',
-                      background: connectionMode === 'direct' ? '#d97706' : '#1e293b',
-                      color: 'white',
-                      cursor: 'pointer'
+                      background: isLoading ? '#475569' : 'linear-gradient(135deg, #d97706, #ea580c)',
+                      color: '#ffffff',
+                      fontWeight: '800',
+                      fontSize: '0.95rem',
+                      cursor: isLoading ? 'wait' : 'pointer',
+                      boxShadow: '0 8px 24px rgba(217, 119, 6, 0.35)'
                     }}
                   >
-                    Conexión Directa REST
+                    {isLoading ? '⏳ Obteniendo Token...' : '✅ Confirmar Contexto y Entrar'}
                   </button>
                 </div>
-              </div>
+              </form>
             )}
           </div>
+        )}
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={isLoading}
-            style={{
-              width: '100%',
-              padding: '14px',
-              borderRadius: '12px',
-              border: 'none',
-              background: isLoading
-                ? '#475569'
-                : 'linear-gradient(135deg, #d97706, #ea580c)',
-              color: '#ffffff',
-              fontWeight: '800',
-              fontSize: '0.95rem',
-              cursor: isLoading ? 'wait' : 'pointer',
-              boxShadow: '0 8px 24px rgba(217, 119, 6, 0.35)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '10px',
-              transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-            }}
-          >
-            {isLoading ? (
-              <>
-                <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⏳</span>
-                <span>Autenticando contra iDempiere REST API v1...</span>
-              </>
-            ) : (
-              <>
-                <span>🔐</span>
-                <span>Ingresar al Panel Administrativo</span>
-              </>
-            )}
-          </button>
-        </form>
-
-        {/* Footer Info */}
+        {/* Footer */}
         <div style={{
-          marginTop: '24px',
+          marginTop: '22px',
           paddingTop: '16px',
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
           display: 'flex',

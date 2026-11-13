@@ -4,6 +4,9 @@ const idempiereService = require('../services/idempiereService');
 
 /**
  * Endpoint de Login con iDempiere ERP REST API v1
+ * Soporta:
+ * - Modalidad 1: Login Directo en 1 Paso
+ * - Modalidad 2 (Paso 2): Confirmación con parámetros de contexto seleccionados
  * Ruta local: POST /api/auth/login
  */
 router.post('/login', async (req, res) => {
@@ -52,6 +55,49 @@ router.post('/login', async (req, res) => {
 });
 
 /**
+ * Endpoint para Modalidad 2 (Paso 1): Consulta Dinámica de Contexto Multitenant
+ * Envía únicamente userName y password a iDempiere para obtener tenants, roles, organizaciones y almacenes
+ * POST /api/auth/context
+ */
+router.post('/context', async (req, res) => {
+  try {
+    const { userName, password, erpBaseUrl, forceFallback } = req.body;
+
+    if (!userName || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Las credenciales "userName" y "password" son requeridas para consultar el contexto.'
+      });
+    }
+
+    const contextResult = await idempiereService.getAvailableContext(
+      userName,
+      password,
+      {
+        baseUrl: erpBaseUrl,
+        allowFallback: forceFallback !== undefined ? Boolean(forceFallback) : true
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: contextResult.simulated
+        ? 'Opciones multitenant cargadas desde Sandbox GardenWorld'
+        : 'Opciones multitenant obtenidas de iDempiere ERP Live',
+      data: contextResult
+    });
+  } catch (error) {
+    console.error('[Auth Context Error]', error.message);
+    const status = error.statusCode || 500;
+    return res.status(status).json({
+      success: false,
+      error: error.message,
+      details: error.response || null
+    });
+  }
+});
+
+/**
  * Endpoint para verificar validez del token en sesión
  * POST /api/auth/verify
  */
@@ -88,7 +134,8 @@ router.get('/config', (req, res) => {
       userName: 'admin @ gardenworld.com',
       password: 'GardenAdmin',
       parameters: idempiereService.DEFAULT_IDEMPIERE_CONFIG.defaultParameters
-    }
+    },
+    sandboxContext: idempiereService.SANDBOX_MULTITENANT_CONTEXT
   });
 });
 

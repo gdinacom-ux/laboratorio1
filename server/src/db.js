@@ -259,10 +259,13 @@ const INITIAL_CONSUMERS = [
   }
 ];
 
-// --- PEDIDOS SIMULADOS ---
+// --- PEDIDOS SIMULADOS (PWA Preventa vs E-commerce) ---
 let inMemoryOrders = [
   {
     id: 'ORD-9842',
+    origin: 'pwa', // 'pwa' (Preventa/Vendedores) | 'ecommerce' (Web)
+    channel: '📱 PWA Preventa Vendedores',
+    vendor: 'Carlos Méndez (Ruta Gastronómica 4)',
     customer: 'Valentina Morales',
     items: [
       { name: 'Rey de las Burgers', qty: 2, price: 14.99 },
@@ -270,12 +273,17 @@ let inMemoryOrders = [
     ],
     total: 34.48,
     status: 'En Parrilla',
+    idempiere_synced: true,
+    idempiere_order_id: 'C_Order_100452',
     timestamp: 'Hace 10 min',
     address: 'Calle Mayor 45, Dpto 3B',
     payment: 'Tarjeta Visa •••• 4821'
   },
   {
     id: 'ORD-9841',
+    origin: 'ecommerce',
+    channel: '🛒 E-commerce Web Directo',
+    vendor: 'Cliente Web Directo',
     customer: 'Sebastián Restrepo',
     items: [
       { name: 'Burger Doble Especial', qty: 1, price: 15.20 },
@@ -283,12 +291,17 @@ let inMemoryOrders = [
     ],
     total: 23.20,
     status: 'En Camino',
+    idempiere_synced: false,
+    idempiere_order_id: null,
     timestamp: 'Hace 22 min',
     address: 'Av. Libertador 1200',
     payment: 'Apple Pay'
   },
   {
     id: 'ORD-9840',
+    origin: 'pwa',
+    channel: '📱 PWA Preventa Vendedores',
+    vendor: 'Mariana López (Preventa Zona Norte)',
     customer: 'Lucía Fernández',
     items: [
       { name: 'Smash Burger Cuádruple Melt', qty: 1, price: 16.50 },
@@ -296,9 +309,29 @@ let inMemoryOrders = [
     ],
     total: 26.49,
     status: 'Entregado',
+    idempiere_synced: true,
+    idempiere_order_id: 'C_Order_100449',
     timestamp: 'Hace 1 hora',
     address: 'Plaza del Sol 8',
     payment: 'Efectivo contra entrega'
+  },
+  {
+    id: 'ORD-9839',
+    origin: 'ecommerce',
+    channel: '🛒 E-commerce Web Directo',
+    vendor: 'Cliente Web Directo',
+    customer: 'Andrés Felipe Gómez',
+    items: [
+      { name: 'Crispy Chicken Royal Ranch', qty: 2, price: 11.80 },
+      { name: 'Milk Shake Vainilla', qty: 2, price: 4.50 }
+    ],
+    total: 32.60,
+    status: 'Recibido',
+    idempiere_synced: false,
+    idempiere_order_id: null,
+    timestamp: 'Hace 2 horas',
+    address: 'Calle 10 # 45-20',
+    payment: 'Transferencia PSE'
   }
 ];
 
@@ -528,24 +561,57 @@ function getConsumerMetrics() {
   };
 }
 
-// Pedidos Simulados
+// Pedidos Simulados (Articulación PWA vs E-commerce)
 function getOrders() {
   return inMemoryOrders;
 }
 
 function addOrder(orderData) {
+  const origin = orderData.origin === 'pwa' ? 'pwa' : 'ecommerce';
   const newOrder = {
     id: `ORD-${Math.floor(1000 + Math.random() * 9000)}`,
+    origin: origin,
+    channel: origin === 'pwa' ? '📱 PWA Preventa Vendedores' : '🛒 E-commerce Web Directo',
+    vendor: orderData.vendor || (origin === 'pwa' ? 'Vendedor Preventa Móvil' : 'Cliente Web Directo'),
     customer: orderData.customer || 'Cliente Invitado',
     items: orderData.items || [],
     total: parseFloat(orderData.total) || 0,
-    status: 'Recibido',
+    status: orderData.status || 'Recibido',
+    idempiere_synced: false,
+    idempiere_order_id: null,
     timestamp: 'Justo ahora',
     address: orderData.address || 'Entrega a Domicilio Express',
     payment: orderData.payment || 'Tarjeta de Crédito / Débito'
   };
   inMemoryOrders.unshift(newOrder);
   return newOrder;
+}
+
+function updateOrderStatus(id, status) {
+  const order = inMemoryOrders.find(o => o.id === id);
+  if (order) {
+    order.status = status;
+    return order;
+  }
+  return null;
+}
+
+function syncOrderWithERP(id, erpContext = {}) {
+  const order = inMemoryOrders.find(o => o.id === id);
+  if (order) {
+    const generatedC_Order_ID = `C_Order_${Math.floor(100000 + Math.random() * 900000)}`;
+    order.idempiere_synced = true;
+    order.idempiere_order_id = generatedC_Order_ID;
+    order.synced_at = new Date().toISOString();
+    order.erp_context = {
+      clientId: erpContext.clientId || 11,
+      organizationId: erpContext.organizationId || 11,
+      warehouseId: erpContext.warehouseId || 103,
+      syncedBy: erpContext.userName || 'ERP Operator'
+    };
+    return order;
+  }
+  return null;
 }
 
 function getDbStatus() {
@@ -573,5 +639,7 @@ module.exports = {
   getConsumerMetrics,
   getOrders,
   addOrder,
+  updateOrderStatus,
+  syncOrderWithERP,
   getDbStatus
 };

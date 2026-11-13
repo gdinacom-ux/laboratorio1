@@ -203,16 +203,16 @@ export default function IdempiereDashboardView() {
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.78rem' }}>
             <div>
-              <span style={{ color: '#64748b' }}>Client:</span> <strong>{auth?.parameters?.clientId} (GardenWorld)</strong>
+              <span style={{ color: '#64748b' }}>Client:</span> <strong>{auth?.parameters?.clientId || auth?.clientId || 11} ({auth?.clientName || 'GardenWorld'})</strong>
             </div>
             <div>
-              <span style={{ color: '#64748b' }}>Role:</span> <strong>{auth?.parameters?.roleId} (GardenAdmin)</strong>
+              <span style={{ color: '#64748b' }}>Role:</span> <strong>{auth?.parameters?.roleId || auth?.roleId || 102} ({auth?.roleName || 'GardenAdmin'})</strong>
             </div>
             <div>
-              <span style={{ color: '#64748b' }}>Org:</span> <strong>{auth?.parameters?.organizationId} (HQ)</strong>
+              <span style={{ color: '#64748b' }}>Org:</span> <strong>{auth?.parameters?.organizationId || auth?.organizationId || 11} ({auth?.orgName || 'HQ'})</strong>
             </div>
             <div>
-              <span style={{ color: '#64748b' }}>Warehouse:</span> <strong>{auth?.parameters?.warehouseId}</strong>
+              <span style={{ color: '#64748b' }}>Warehouse:</span> <strong>{auth?.parameters?.warehouseId || auth?.warehouseId || 103}</strong>
             </div>
           </div>
           <div style={{ marginTop: '10px', fontSize: '0.75rem', color: '#64748b' }}>

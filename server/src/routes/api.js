@@ -101,8 +101,42 @@ router.post('/orders', (req, res) => {
     const newOrder = db.addOrder(orderData);
     res.status(201).json({
       success: true,
-      message: 'Orden simulada procesada con éxito',
+      message: 'Orden procesada con éxito',
       data: newOrder
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update order status
+router.patch('/orders/:id/status', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const updated = db.updateOrderStatus(id, status);
+    if (!updated) {
+      return res.status(404).json({ success: false, error: `Orden ${id} no encontrada.` });
+    }
+    res.json({ success: true, message: `Estado actualizado a "${status}"`, data: updated });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Sincronizar Orden con iDempiere ERP (generando C_Order)
+router.post('/orders/:id/sync-erp', (req, res) => {
+  try {
+    const { id } = req.params;
+    const erpContext = req.body || {};
+    const syncedOrder = db.syncOrderWithERP(id, erpContext);
+    if (!syncedOrder) {
+      return res.status(404).json({ success: false, error: `Orden ${id} no encontrada.` });
+    }
+    res.json({
+      success: true,
+      message: `Orden ${id} sincronizada exitosamente con iDempiere ERP (ID: ${syncedOrder.idempiere_order_id})`,
+      data: syncedOrder
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
