@@ -15,7 +15,7 @@
 export const STORAGE_SESSION_KEY = 'hamburger_rapid_idempiere_auth_session';
 
 export const DEFAULT_GARDENWORLD_PARAMS = {
-  erpBaseUrl: 'https://test.idempiere.org:443',
+  erpBaseUrl: 'https://test.idempiere.org',
   userName: 'admin @ gardenworld.com',
   password: 'GardenAdmin',
   parameters: {
@@ -28,19 +28,20 @@ export const DEFAULT_GARDENWORLD_PARAMS = {
 };
 
 /**
- * Resuelve la URL final aplicando el modo de proxy configurado
- * @param {string} baseUrl - URL base de iDempiere (ej. https://test.idempiere.org:443)
- * @param {string} mode - 'proxy' (Backend Local), 'corsproxy' (corsproxy.io), 'direct' (Navegador)
- * @param {string} customCorsPrefix - Prefijo de proxy personalizado si aplica
+ * Normaliza la URL base de iDempiere eliminando puertos redundantes (:443) y barras finales
  */
-export function buildEndpointUrl(baseUrl, mode = 'proxy', customCorsPrefix = 'https://corsproxy.io/?') {
-  const cleanBase = (baseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl).replace(/\/+$/, '');
-  const tokensPath = '/api/v1/auth/tokens';
+export function normalizeErpBaseUrl(rawUrl) {
+  let url = (rawUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl).trim().replace(/\/+$/, '');
+  url = url.replace(/:443$/, '');
+  return url;
+}
 
-  if (mode === 'corsproxy') {
-    return `${customCorsPrefix}${encodeURIComponent(`${cleanBase}${tokensPath}`)}`;
-  }
-  return `${cleanBase}${tokensPath}`;
+/**
+ * Resuelve la URL final para conexión directa
+ */
+export function buildEndpointUrl(baseUrl) {
+  const cleanBase = normalizeErpBaseUrl(baseUrl);
+  return `${cleanBase}/api/v1/auth/tokens`;
 }
 
 /**
@@ -109,9 +110,7 @@ export function clearSession() {
 /**
  * Autenticación en 1 Paso
  * Envía credenciales y parámetros de contexto fijos en una sola petición
- * 
- * @param {Object} credentials - { userName, password, parameters, erpBaseUrl }
- * @param {string} connectionMode - 'proxy' | 'corsproxy' | 'direct'
+ * Con tolerancia a fallos y auto-recuperación ante bloqueos de CORS en navegador
  */
 export async function loginDirect(credentials, connectionMode = 'proxy') {
   const { userName, password, parameters, erpBaseUrl } = credentials;
@@ -120,92 +119,89 @@ export async function loginDirect(credentials, connectionMode = 'proxy') {
     throw new Error('El usuario y la contraseña son requeridos.');
   }
 
+  const cleanBase = normalizeErpBaseUrl(erpBaseUrl);
   const formattedParams = formatIdempiereParameters(parameters);
 
-  // MODO 1: Vía Proxy Backend Local (Express Gateway /api/auth/login)
-  if (connectionMode === 'proxy') {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        userName: userName.trim(),
-        password,
-        parameters: formattedParams,
-        erpBaseUrl: erpBaseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl
-      })
-    });
+  // MODO DIRECTO: Intenta primero REST directo desde el navegador (test.idempiere.org ya soporta CORS)
+  if (connectionMode === 'direct') {
+    const targetEndpoint = `${cleanBase}/api/v1/auth/tokens`;
+    const requestBody = {
+      userName: userName.trim(),
+      password: password,
+      parameters: formattedParams
+    };
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      const error = new Error(data.error || `Error HTTP ${response.status} en autenticación`);
-      error.details = data;
-      throw error;
+    try {
+      const response = await fetch(targetEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const resJson = await response.json().catch(() => ({}));
+
+      if (response.ok) {
+        const token = resJson.token || resJson.data?.token;
+        if (token) {
+          return {
+            token,
+            tokenType: 'Bearer',
+            userId: resJson.userId || 100,
+            userName: userName.trim(),
+            parameters: formattedParams,
+            role: { id: formattedParams.roleId, name: formattedParams.roleId === 102 ? 'GardenWorld Admin' : `Rol #${formattedParams.roleId}` },
+            client: { id: formattedParams.clientId, name: 'GardenWorld, Inc.' },
+            organization: { id: formattedParams.organizationId, name: `HQ Org #${formattedParams.organizationId}` },
+            warehouse: { id: formattedParams.warehouseId, name: `Almacén #${formattedParams.warehouseId}` },
+            simulated: false,
+            audit: {
+              endpointCalled: targetEndpoint,
+              connectionMode: 'direct',
+              complianceRulesChecked: {
+                endpointPluralTokens: true,
+                nestedParametersObject: true,
+                fieldOrganizationIdValid: true
+              },
+              timestamp: new Date().toISOString()
+            }
+          };
+        }
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Credenciales inválidas en iDempiere ERP.');
+      }
+    } catch (directErr) {
+      console.warn('[AuthService] Conexión directa falló (' + directErr.message + '). Auto-recuperando vía Proxy Backend...');
+      // Fallback transparente al proxy backend local
     }
-    return data.data;
   }
 
-  // MODO 2 & 3: Conexión Directa o Vía CORS Proxy Público
-  const targetEndpoint = buildEndpointUrl(erpBaseUrl, connectionMode);
-  const requestBody = {
-    userName: userName.trim(),
-    password: password,
-    parameters: formattedParams
-  };
-
-  const response = await fetch(targetEndpoint, {
+  // MODO PROXY (O FALLBACK AUTOMÁTICO SEGURO):
+  const response = await fetch('/api/auth/login', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json'
     },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify({
+      userName: userName.trim(),
+      password,
+      parameters: formattedParams,
+      erpBaseUrl: cleanBase
+    })
   });
 
-  const resJson = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error(`Error 404 en ${targetEndpoint}. Verifique la ruta en plural /api/v1/auth/tokens.`);
-    }
-    if (response.status === 400) {
-      throw new Error(`Error 400 (Bad Request). Verifique que 'organizationId' sea numérico y esté anidado en 'parameters'.`);
-    }
-    if (response.status === 401 || response.status === 403) {
-      throw new Error(`Error 401: Credenciales inválidas o contexto no autorizado para este usuario.`);
-    }
-    throw new Error(`iDempiere respondió con HTTP ${response.status}: ${resJson.message || 'Error desconocido'}`);
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    const error = new Error(data.error || `Error HTTP ${response.status} en autenticación`);
+    error.details = data;
+    throw error;
   }
-
-  const token = resJson.token || resJson.data?.token;
-  if (!token) {
-    throw new Error('iDempiere respondió 200 OK pero no incluyó el atributo "token" en el cuerpo JSON.');
-  }
-
-  return {
-    token,
-    tokenType: 'Bearer',
-    userId: resJson.userId || 100,
-    userName: userName.trim(),
-    parameters: formattedParams,
-    role: { id: formattedParams.roleId, name: formattedParams.roleId === 102 ? 'GardenAdmin' : `Rol #${formattedParams.roleId}` },
-    client: { id: formattedParams.clientId, name: 'GardenWorld, Inc.' },
-    organization: { id: formattedParams.organizationId, name: `HQ Org #${formattedParams.organizationId}` },
-    warehouse: { id: formattedParams.warehouseId, name: `Almacén #${formattedParams.warehouseId}` },
-    simulated: false,
-    audit: {
-      endpointCalled: targetEndpoint,
-      connectionMode,
-      complianceRulesChecked: {
-        endpointPluralTokens: true,
-        nestedParametersObject: true,
-        fieldOrganizationIdValid: true
-      },
-      timestamp: new Date().toISOString()
-    }
-  };
+  return data.data;
 }
 
 // =======================================================================
@@ -214,7 +210,8 @@ export async function loginDirect(credentials, connectionMode = 'proxy') {
 
 /**
  * Paso 1: Enviar únicamente usuario y contraseña
- * Obtiene lista de Tenants (Clientes), Roles, Organizaciones y Almacenes asignados
+ * Obtiene lista dinámica de Tenants (Clientes), Roles, Organizaciones y Almacenes asignados
+ * Con auto-recuperación ante bloqueos de CORS
  */
 export async function requestContextStep1(credentials, connectionMode = 'proxy') {
   const { userName, password, erpBaseUrl } = credentials;
@@ -223,31 +220,51 @@ export async function requestContextStep1(credentials, connectionMode = 'proxy')
     throw new Error('Debe ingresar usuario y contraseña para consultar las asignaciones.');
   }
 
-  // Vía Proxy Backend
-  if (connectionMode === 'proxy') {
-    const response = await fetch('/api/auth/context', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        userName: userName.trim(),
-        password,
-        erpBaseUrl: erpBaseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl
-      })
-    });
+  const cleanBase = normalizeErpBaseUrl(erpBaseUrl);
 
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Error al obtener contexto multitenant en iDempiere');
+  // MODO DIRECTO: Probar directo si el usuario lo solicita
+  if (connectionMode === 'direct') {
+    const targetEndpoint = `${cleanBase}/api/v1/auth/tokens`;
+    try {
+      const response = await fetch(targetEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          userName: userName.trim(),
+          password: password
+        })
+      });
+
+      const resJson = await response.json().catch(() => ({}));
+
+      if (response.ok && Array.isArray(resJson.clients)) {
+        return {
+          step: 1,
+          success: true,
+          userName: userName.trim(),
+          stage1Token: resJson.token || null,
+          clients: resJson.clients,
+          roles: resJson.roles || [{ id: 102, name: 'GardenWorld Admin' }],
+          organizations: resJson.organizations || [{ id: 11, name: 'HQ - Headquarters' }],
+          warehouses: resJson.warehouses || [{ id: 103, name: 'HQ Warehouse' }],
+          languages: [{ id: 'en_US', name: 'English (US)' }, { id: 'es_ES', name: 'Español (ES)' }]
+        };
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Usuario o contraseña incorrectos en iDempiere ERP.');
+      }
+    } catch (directErr) {
+      console.warn('[AuthService] Paso 1 directo falló (' + directErr.message + '). Auto-recuperando vía Proxy Backend...');
+      // Fallback transparente al proxy backend local
     }
-    return data.data;
   }
 
-  // Vía Conexión Directa o CORS Proxy
-  const targetEndpoint = buildEndpointUrl(erpBaseUrl, connectionMode);
-  const response = await fetch(targetEndpoint, {
+  // MODO PROXY BACKEND LOCAL (100% libre de restricciones CORS):
+  const response = await fetch('/api/auth/context', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -255,39 +272,17 @@ export async function requestContextStep1(credentials, connectionMode = 'proxy')
     },
     body: JSON.stringify({
       userName: userName.trim(),
-      password: password
+      password,
+      erpBaseUrl: cleanBase
     })
   });
 
-  const resJson = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Usuario o contraseña incorrectos en iDempiere ERP.');
-    }
-    throw new Error(`Error HTTP ${response.status} al consultar contexto multitenant.`);
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Error al obtener contexto multitenant en iDempiere');
   }
 
-  // Si ya devolvió un token directamente en el paso 1
-  if (resJson.token) {
-    return {
-      step: 1,
-      alreadyAuthenticated: true,
-      token: resJson.token,
-      rawResponse: resJson
-    };
-  }
-
-  return {
-    step: 1,
-    success: true,
-    userName: userName.trim(),
-    clients: resJson.clients || resJson.clientList || [{ id: 11, name: 'GardenWorld, Inc.' }],
-    roles: resJson.roles || resJson.roleList || [{ id: 102, name: 'GardenAdmin' }],
-    organizations: resJson.organizations || resJson.orgList || [{ id: 11, name: 'HQ - Headquarters' }],
-    warehouses: resJson.warehouses || resJson.warehouseList || [{ id: 103, name: 'HQ Central Warehouse' }],
-    languages: [{ id: 'en_US', name: 'English (US)' }, { id: 'es_ES', name: 'Español (ES)' }]
-  };
+  return data.data;
 }
 
 /**

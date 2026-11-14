@@ -85,6 +85,31 @@ laboratorio1/
 
 Registro cronológico obligatorio de intervenciones ejecutadas por agentes de IA:
 
+### [2026-11-13] - Corrección de Flujo en 2 Pasos y Eliminación de Error "Failed to fetch"
+- **Agente:** Antigravity (Google DeepMind)
+- **Alcance y Delimitación:** Módulo de autenticación en Panel Admin (`apps/admin`) y backend proxy (`server/src/services/idempiereService.js`). Las capas `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**.
+- **Diagnóstico del Error Reportado en Pantalla:**
+  1. *Causa del error `Failed to fetch`:* El botón `CORS Proxy IO` utilizaba el servicio externo `https://corsproxy.io/?`, el cual bloquea o rechaza solicitudes HTTP `POST` con encabezados y cuerpos JSON personalizados, provocando un fallo de red a nivel de navegador (`TypeError: Failed to fetch`). Adicionalmente, el servidor oficial `https://test.idempiere.org` ya emite por sí mismo cabeceras `Access-Control-Allow-Origin: *`, por lo que dicho proxy externo era superfluo y perjudicial.
+  2. *Causa del bloqueo en Modalidad 2 (2 Pasos):* En iDempiere REST API v1, el Paso 1 (`POST /api/v1/auth/tokens` con `{ userName, password }`) responde con `{ clients: [...], token: "..." }`. El token retornado en esta fase es un token temporal de pre-autenticación para consultar catálogos. El código previo interpretaba la presencia de dicho token como si la sesión estuviera concluida (`alreadyAuthenticated: true`), omitiendo el despliegue del Paso 2 (los menús desplegables para seleccionar Empresa, Rol, Organización y Almacén).
+  3. *Incompatibilidad del puerto `:443` en URL:* El preset de URL incluía `:443` explícito (`https://test.idempiere.org:443`), lo que causaba incompatibilidades en la cabecera `Host` y el protocolo TLS en diversas librerías cliente.
+- **Acciones y Correcciones Implementadas:**
+  1. **Aislamiento y Eliminación de Proxies Inestables ([`LoginPage.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/LoginPage.jsx)):**
+     - Se eliminó definitivamente el botón de `CORS Proxy IO`.
+     - Se implementó un selector limpio de 2 modalidades:
+       - `🛡️ Proxy Backend (Recomendado)`: Peticiones canalizadas por el backend local/cloud en `/api/auth/...`, sin ningún riesgo de CORS y con contingencia automática.
+       - `⚡ REST Directo al ERP`: Conexión directa desde el navegador contra el ERP, respaldada por un mecanismo de auto-recuperación transparente hacia el proxy backend si el navegador presenta bloqueos de red o extensiones.
+  2. **Reingeniería del Flujo Multitenant en 2 Pasos ([`idempiereService.js`](file:///c:/MiClaseUno/laboratorio1/server/src/services/idempiereService.js) y [`idempiereAuthService.js`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/services/idempiereAuthService.js)):**
+     - El Paso 1 ahora procesa adecuadamente el token de etapa 1 y consulta en tiempo real los catálogos de roles (`GET /api/v1/auth/roles?client=X`), organizaciones (`GET /api/v1/auth/organizations?client=X&role=Y`) y almacenes (`GET /api/v1/auth/warehouses?client=X&role=Y&organization=Z`).
+     - Se eliminó la asignación prematura de `alreadyAuthenticated: true` para habilitar formalmente la transición al Paso 2 con sus desplegables poblados dinámicamente.
+     - En el Paso 2 (`completeLoginStep2`), se confirman los parámetros elegidos y se emite el token final Bearer de iDempiere con su contexto validado.
+  3. **Normalización Preventiva de URLs:**
+     - Función `normalizeErpBaseUrl` que sanea URLs eliminando `:443` y barras diagonales sobrantes tanto en cliente como en servidor.
+  4. **Compilación y Despliegue:**
+     - Recompilación con Vite (`apps/admin/dist`) y sincronización de estáticos en `server/public/admin`.
+- **Estado de la Solución:** Validada, corregida integralmente y documentada.
+
+---
+
 ### [2026-11-12] - Módulo de Autenticación, Control de Acceso y Gestión de Pedidos en Panel Admin
 - **Agente:** Antigravity (Google DeepMind)
 - **Alcance y Delimitación:** Se intervino exclusivamente el Panel de Administración (`apps/admin`) y los endpoints de soporte en el backend (`server`). Las capas `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**.

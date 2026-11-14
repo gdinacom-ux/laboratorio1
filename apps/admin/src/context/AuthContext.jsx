@@ -24,12 +24,13 @@ export function AuthProvider({ children }) {
   // Modalidad de autenticación seleccionada: 'direct' (1 Paso) | 'assisted' (2 Pasos)
   const [loginMode, setLoginMode] = useState('direct');
 
-  // Modo de conexión & CORS: 'proxy' (Backend Local) | 'corsproxy' (corsproxy.io) | 'direct' (Navegador)
+  // Modo de conexión: 'proxy' (Backend Local/Cloud - Recomendado) | 'direct' (REST Directo al ERP)
   const [connectionMode, setConnectionMode] = useState('proxy');
 
-  // URL Base editable de iDempiere
+  // URL Base editable de iDempiere (sin puerto :443 redundante)
   const [erpBaseUrl, setErpBaseUrl] = useState(() => {
-    return auth?.erpBaseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl;
+    const raw = auth?.erpBaseUrl || DEFAULT_GARDENWORLD_PARAMS.erpBaseUrl;
+    return (raw || '').replace(/:443$/, '');
   });
 
   // Guardar en almacenamiento cada vez que cambie auth
@@ -116,14 +117,6 @@ export function AuthProvider({ children }) {
     try {
       const result = await serviceRequestContextStep1(credentials, activeMode);
       setIsLoading(false);
-
-      // Si ya vino autenticado en el paso 1
-      if (result.alreadyAuthenticated && result.token) {
-        const session = buildNormalizedSession(result, credentials, activeMode);
-        setAuth(session);
-        return { success: true, authenticated: true, session };
-      }
-
       return { success: true, authenticated: false, contextData: result };
     } catch (err) {
       setIsLoading(false);

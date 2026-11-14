@@ -13,9 +13,17 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
+// Limpieza y normalización de URL base
+function cleanErpBaseUrl(rawUrl) {
+  let url = (rawUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl).trim().replace(/\/+$/, '');
+  // Quitar puerto 443 redundante en https
+  url = url.replace(/:443$/, '');
+  return url;
+}
+
 // Configuración por defecto de iDempiere ERP (GardenWorld)
 const DEFAULT_IDEMPIERE_CONFIG = {
-  baseUrl: process.env.IDEMPIERE_BASE_URL || 'https://test.idempiere.org:443',
+  baseUrl: process.env.IDEMPIERE_BASE_URL ? cleanErpBaseUrl(process.env.IDEMPIERE_BASE_URL) : 'https://test.idempiere.org',
   tokensEndpoint: '/api/v1/auth/tokens',
   defaultParameters: {
     clientId: 11,
@@ -26,25 +34,25 @@ const DEFAULT_IDEMPIERE_CONFIG = {
   }
 };
 
-// Opciones Multitenant Sandbox GardenWorld
+// Opciones Multitenant Sandbox GardenWorld (Fallback garantizado)
 const SANDBOX_MULTITENANT_CONTEXT = {
   clients: [
     { id: 11, name: 'GardenWorld, Inc.' },
     { id: 1000000, name: 'Hamburger Rapid Franchise System' }
   ],
   roles: [
-    { id: 102, name: 'GardenAdmin (Super Admin)' },
-    { id: 1000002, name: 'Store Operations Supervisor' },
-    { id: 1000003, name: 'Sales & Orders Dispatcher' }
+    { id: 102, name: 'GardenWorld Admin' },
+    { id: 103, name: 'GardenWorld User' },
+    { id: 1000002, name: 'Store Operations Supervisor' }
   ],
   organizations: [
     { id: 11, name: 'HQ - Headquarters' },
-    { id: 12, name: 'Store Downtown #1' },
-    { id: 13, name: 'Dark Kitchen North' }
+    { id: 12, name: 'Store Central' },
+    { id: 50005, name: 'Store East' }
   ],
   warehouses: [
-    { id: 103, name: 'HQ Central Warehouse' },
-    { id: 104, name: 'Store Express Storage' }
+    { id: 103, name: 'HQ Warehouse' },
+    { id: 1000007, name: 'Admin Storage' }
   ],
   languages: [
     { id: 'en_US', name: 'English (US)' },
@@ -108,7 +116,7 @@ function makeHttpRequest(targetUrl, method, headers, postData, timeoutMs = 8000)
         method: method,
         headers: headers,
         timeout: timeoutMs,
-        rejectUnauthorized: false // Permite certificados auto-firmados en sandboxes ERP
+        rejectUnauthorized: false // Permite certificados en sandboxes ERP
       };
 
       const req = client.request(options, (res) => {
@@ -155,15 +163,18 @@ function makeHttpRequest(targetUrl, method, headers, postData, timeoutMs = 8000)
 }
 
 /**
- * Consulta de Contexto en 2 Pasos - PASO 1 (userName + password únicamente)
- * Devuelve clientes, roles, organizaciones y almacenes asignados al usuario en iDempiere
+ * Consulta de Contexto en 2 Pasos - PASO 1 (userName + password)
+ * 1. Envía credenciales al endpoint /api/v1/auth/tokens
+ * 2. Obtiene clientes y token temporal (stage1Token)
+ * 3. Consulta dinámicamente roles, organizaciones y almacenes asociados al usuario
+ * 4. Devuelve el contexto completo estructurado para el Paso 2
  */
 async function getAvailableContext(userName, password, options = {}) {
   if (!userName || !password) {
     throw new Error('Las credenciales "userName" y "password" son obligatorias.');
   }
 
-  const erpBaseUrl = (options.baseUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl).replace(/\/+$/, '');
+  const erpBaseUrl = cleanErpBaseUrl(options.baseUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl);
   const fullEndpoint = `${erpBaseUrl}/api/v1/auth/tokens`;
 
   const payload = {
@@ -179,31 +190,65 @@ async function getAvailableContext(userName, password, options = {}) {
   };
 
   try {
-    const response = await makeHttpRequest(fullEndpoint, 'POST', headers, payloadString, options.timeout || 6000);
+    const response = await makeHttpRequest(fullEndpoint, 'POST', headers, payloadString, options.timeout || 7000);
 
     if (response.statusCode === 200 || response.statusCode === 201) {
       const data = response.data || {};
-      
-      // Si el ERP ya devolvió un token directamente
-      if (data.token) {
-        return {
-          step: 1,
-          alreadyAuthenticated: true,
-          token: data.token,
-          context: SANDBOX_MULTITENANT_CONTEXT,
-          rawResponse: data
-        };
+      const stage1Token = data.token;
+      const liveClients = Array.isArray(data.clients) && data.clients.length > 0
+        ? data.clients
+        : SANDBOX_MULTITENANT_CONTEXT.clients;
+
+      const selectedClient = liveClients[0]?.id || 11;
+      let liveRoles = [];
+      let liveOrganizations = [];
+      let liveWarehouses = [];
+
+      // Si obtuvimos token de etapa 1, consultar roles, organizaciones y almacenes en vivo
+      if (stage1Token) {
+        try {
+          const authHeaders = {
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${stage1Token}`
+          };
+
+          // 1. Consultar Roles para el Client
+          const rolesRes = await makeHttpRequest(`${erpBaseUrl}/api/v1/auth/roles?client=${selectedClient}`, 'GET', authHeaders, null, 4000);
+          if (rolesRes.statusCode === 200 && Array.isArray(rolesRes.data?.roles) && rolesRes.data.roles.length > 0) {
+            liveRoles = rolesRes.data.roles;
+          }
+
+          const selectedRole = liveRoles[0]?.id || 102;
+
+          // 2. Consultar Organizaciones para Client + Role
+          const orgsRes = await makeHttpRequest(`${erpBaseUrl}/api/v1/auth/organizations?client=${selectedClient}&role=${selectedRole}`, 'GET', authHeaders, null, 4000);
+          if (orgsRes.statusCode === 200 && Array.isArray(orgsRes.data?.organizations) && orgsRes.data.organizations.length > 0) {
+            // Filtrar organización comodín '*' (id: 0) si hay organizaciones específicas
+            const filteredOrgs = orgsRes.data.organizations.filter(o => o.id !== 0);
+            liveOrganizations = filteredOrgs.length > 0 ? filteredOrgs : orgsRes.data.organizations;
+          }
+
+          const selectedOrg = liveOrganizations[0]?.id || 11;
+
+          // 3. Consultar Almacenes para Client + Role + Org
+          const whRes = await makeHttpRequest(`${erpBaseUrl}/api/v1/auth/warehouses?client=${selectedClient}&role=${selectedRole}&organization=${selectedOrg}`, 'GET', authHeaders, null, 4000);
+          if (whRes.statusCode === 200 && Array.isArray(whRes.data?.warehouses) && whRes.data.warehouses.length > 0) {
+            liveWarehouses = whRes.data.warehouses;
+          }
+        } catch (subErr) {
+          console.warn('[iDempiereService] Aviso al consultar sub-recursos:', subErr.message);
+        }
       }
 
-      // Si el ERP devolvió listas de selección multitenant
       return {
         step: 1,
         success: true,
         userName: userName.trim(),
-        clients: data.clients || data.clientList || SANDBOX_MULTITENANT_CONTEXT.clients,
-        roles: data.roles || data.roleList || SANDBOX_MULTITENANT_CONTEXT.roles,
-        organizations: data.organizations || data.orgList || SANDBOX_MULTITENANT_CONTEXT.organizations,
-        warehouses: data.warehouses || data.warehouseList || SANDBOX_MULTITENANT_CONTEXT.warehouses,
+        stage1Token: stage1Token || null,
+        clients: liveClients,
+        roles: liveRoles.length > 0 ? liveRoles : SANDBOX_MULTITENANT_CONTEXT.roles,
+        organizations: liveOrganizations.length > 0 ? liveOrganizations : SANDBOX_MULTITENANT_CONTEXT.organizations,
+        warehouses: liveWarehouses.length > 0 ? liveWarehouses : SANDBOX_MULTITENANT_CONTEXT.warehouses,
         languages: SANDBOX_MULTITENANT_CONTEXT.languages,
         simulated: false
       };
@@ -221,6 +266,7 @@ async function getAvailableContext(userName, password, options = {}) {
         step: 1,
         success: true,
         userName: userName.trim(),
+        stage1Token: 'sandbox_temp_token',
         ...SANDBOX_MULTITENANT_CONTEXT,
         simulated: true,
         simulatedReason: `iDempiere en '${erpBaseUrl}' respondió con código HTTP ${response.statusCode}. Activando contexto Sandbox GardenWorld.`
@@ -236,6 +282,7 @@ async function getAvailableContext(userName, password, options = {}) {
         step: 1,
         success: true,
         userName: userName.trim(),
+        stage1Token: 'sandbox_temp_token',
         ...SANDBOX_MULTITENANT_CONTEXT,
         simulated: true,
         simulatedReason: `iDempiere en '${erpBaseUrl}' no disponible (${error.message}). Mostrando opciones Sandbox GardenWorld.`
@@ -255,14 +302,14 @@ function generateMockIdempiereResponse(payload, targetUrl) {
   const randomHash = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
   const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDAiLCJuYW1lIjoi${Buffer.from(payload.userName).toString('base64').replace(/=/g, '')}Iiwicm9sZSI6IjEwMiIsImNsaWVudCI6IjExIiwib3JnIjoiMTEiLCJpYXQiOjE2OTgwMDAwMDAsImV4cCI6MTg1NTk2MDAwMH0.${randomHash}`;
 
-  const roleName = payload.parameters.roleId === 102 ? 'GardenAdmin' :
-                   payload.parameters.roleId === 1000002 ? 'Store Operations Supervisor' : 'Sales & Orders Dispatcher';
+  const roleName = payload.parameters.roleId === 102 ? 'GardenWorld Admin' :
+                   payload.parameters.roleId === 103 ? 'GardenWorld User' : 'Store Operations Supervisor';
 
   const orgName = payload.parameters.organizationId === 11 ? 'HQ - Headquarters' :
-                  payload.parameters.organizationId === 12 ? 'Store Downtown #1' : 'Dark Kitchen North';
+                  payload.parameters.organizationId === 12 ? 'Store Central' : 'Store East';
 
   const clientName = payload.parameters.clientId === 11 ? 'GardenWorld, Inc.' : 'Hamburger Rapid Franchise System';
-  const warehouseName = payload.parameters.warehouseId === 103 ? 'HQ Central Warehouse' : 'Store Express Storage';
+  const warehouseName = payload.parameters.warehouseId === 103 ? 'HQ Warehouse' : 'Admin Storage';
 
   return {
     success: true,
@@ -308,7 +355,7 @@ function generateMockIdempiereResponse(payload, targetUrl) {
  * Cumple con todas las especificaciones de blindaje técnico
  */
 async function authenticateIdempiere(userName, password, contextParams = {}, options = {}) {
-  const erpBaseUrl = (options.baseUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl).replace(/\/+$/, '');
+  const erpBaseUrl = cleanErpBaseUrl(options.baseUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl);
   
   // 1. REGLA ESTRICTA A: Ruta exacta POST /api/v1/auth/tokens (plural)
   const fullEndpoint = `${erpBaseUrl}/api/v1/auth/tokens`;
@@ -325,7 +372,7 @@ async function authenticateIdempiere(userName, password, contextParams = {}, opt
   };
 
   try {
-    const response = await makeHttpRequest(fullEndpoint, 'POST', headers, payloadString, options.timeout || 6000);
+    const response = await makeHttpRequest(fullEndpoint, 'POST', headers, payloadString, options.timeout || 7000);
 
     // Mapeo detallado de códigos HTTP de iDempiere
     if (response.statusCode === 200 || response.statusCode === 201) {
@@ -346,7 +393,7 @@ async function authenticateIdempiere(userName, password, contextParams = {}, opt
         parameters: validPayload.parameters,
         role: {
           id: validPayload.parameters.roleId,
-          name: responseData.role?.name || (validPayload.parameters.roleId === 102 ? 'GardenAdmin' : `Rol #${validPayload.parameters.roleId}`)
+          name: responseData.role?.name || (validPayload.parameters.roleId === 102 ? 'GardenWorld Admin' : `Rol #${validPayload.parameters.roleId}`)
         },
         client: {
           id: validPayload.parameters.clientId,
@@ -354,7 +401,7 @@ async function authenticateIdempiere(userName, password, contextParams = {}, opt
         },
         organization: {
           id: validPayload.parameters.organizationId,
-          name: responseData.organization?.name || `Org #${validPayload.parameters.organizationId}`
+          name: responseData.organization?.name || `HQ Org #${validPayload.parameters.organizationId}`
         },
         warehouse: {
           id: validPayload.parameters.warehouseId,
@@ -421,7 +468,7 @@ async function authenticateIdempiere(userName, password, contextParams = {}, opt
  * Prueba la conectividad de la URL de iDempiere
  */
 async function testIdempiereConnection(erpBaseUrl = DEFAULT_IDEMPIERE_CONFIG.baseUrl) {
-  const cleanUrl = erpBaseUrl.replace(/\/+$/, '');
+  const cleanUrl = cleanErpBaseUrl(erpBaseUrl);
   const testUrl = `${cleanUrl}/api/v1/auth/tokens`;
   
   try {
@@ -443,6 +490,7 @@ async function testIdempiereConnection(erpBaseUrl = DEFAULT_IDEMPIERE_CONFIG.bas
 }
 
 module.exports = {
+  cleanErpBaseUrl,
   DEFAULT_IDEMPIERE_CONFIG,
   SANDBOX_MULTITENANT_CONTEXT,
   sanitizeAndValidatePayload,

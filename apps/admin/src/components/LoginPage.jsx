@@ -279,9 +279,9 @@ export default function LoginPage() {
             <div style={{ display: 'flex', gap: '6px' }}>
               <button
                 type="button"
-                onClick={() => setErpBaseUrl('https://test.idempiere.org:443')}
+                onClick={() => setErpBaseUrl('https://test.idempiere.org')}
                 style={{
-                  background: erpBaseUrl === 'https://test.idempiere.org:443' ? '#d97706' : '#1e293b',
+                  background: erpBaseUrl === 'https://test.idempiere.org' ? '#d97706' : '#1e293b',
                   color: 'white',
                   border: 'none',
                   borderRadius: '6px',
@@ -318,7 +318,7 @@ export default function LoginPage() {
               type="text"
               value={erpBaseUrl}
               onChange={(e) => setErpBaseUrl(e.target.value)}
-              placeholder="https://test.idempiere.org:443"
+              placeholder="https://test.idempiere.org"
               style={{
                 width: '100%',
                 padding: '8px 10px',
@@ -333,57 +333,48 @@ export default function LoginPage() {
           </div>
 
           {/* Connection Mode Selector */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
             <button
               type="button"
               onClick={() => setConnectionMode('proxy')}
               style={{
-                padding: '6px 8px',
+                padding: '8px',
                 borderRadius: '8px',
-                border: 'none',
+                border: connectionMode === 'proxy' ? '1px solid #f59e0b' : '1px solid #334155',
                 background: connectionMode === 'proxy' ? '#d97706' : '#1e293b',
                 color: 'white',
-                fontSize: '0.7rem',
+                fontSize: '0.72rem',
                 fontWeight: '700',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px'
               }}
-              title="Recomendado: Evita bloqueos de CORS y gestiona contingencia con el backend"
+              title="Recomendado: Sin bloqueos CORS, con alta disponibilidad y tolerancia a fallos en el backend"
             >
-              🛡️ Proxy Local (Rec.)
-            </button>
-            <button
-              type="button"
-              onClick={() => setConnectionMode('corsproxy')}
-              style={{
-                padding: '6px 8px',
-                borderRadius: '8px',
-                border: 'none',
-                background: connectionMode === 'corsproxy' ? '#d97706' : '#1e293b',
-                color: 'white',
-                fontSize: '0.7rem',
-                fontWeight: '700',
-                cursor: 'pointer'
-              }}
-              title="Vía corsproxy.io para pruebas directas en navegador sin CORS en ERP"
-            >
-              🌍 CORS Proxy IO
+              🛡️ Proxy Backend (Recomendado)
             </button>
             <button
               type="button"
               onClick={() => setConnectionMode('direct')}
               style={{
-                padding: '6px 8px',
+                padding: '8px',
                 borderRadius: '8px',
-                border: 'none',
+                border: connectionMode === 'direct' ? '1px solid #f59e0b' : '1px solid #334155',
                 background: connectionMode === 'direct' ? '#d97706' : '#1e293b',
                 color: 'white',
-                fontSize: '0.7rem',
+                fontSize: '0.72rem',
                 fontWeight: '700',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px'
               }}
-              title="Conexión HTTP/HTTPS directa desde el navegador"
+              title="Conexión HTTP/HTTPS directa desde el navegador (con auto-recuperación transparente)"
             >
-              ⚡ REST Directo
+              ⚡ REST Directo al ERP
             </button>
           </div>
         </div>
