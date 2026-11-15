@@ -98,6 +98,51 @@ router.post('/context', async (req, res) => {
 });
 
 /**
+ * Endpoint para Modalidad 2 (Paso 2): Confirmar Contexto y Obtener Token Definitivo
+ * Implementa estrictamente el flujo oficial PUT /api/v1/auth/tokens con Authorization: Bearer <stage1Token>
+ * POST /api/auth/step2
+ */
+router.post('/step2', async (req, res) => {
+  try {
+    const { stage1Token, parameters, erpBaseUrl, userName, password, forceFallback } = req.body;
+
+    if (!parameters || typeof parameters !== 'object') {
+      return res.status(400).json({
+        success: false,
+        error: 'El objeto "parameters" con el contexto de sesión es requerido.'
+      });
+    }
+
+    const authResult = await idempiereService.authenticateStep2(
+      stage1Token,
+      parameters,
+      {
+        baseUrl: erpBaseUrl,
+        userName,
+        password,
+        allowFallback: forceFallback !== undefined ? Boolean(forceFallback) : true
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: authResult.simulated
+        ? 'Sesión contextualizada en Sandbox GardenWorld'
+        : 'Sesión contextualizada exitosamente con iDempiere ERP Live (PUT /tokens)',
+      data: authResult
+    });
+  } catch (error) {
+    console.error('[Auth Step2 Error]', error.message);
+    const status = error.statusCode || 500;
+    return res.status(status).json({
+      success: false,
+      error: error.message,
+      details: error.response || null
+    });
+  }
+});
+
+/**
  * Endpoint para verificar validez del token en sesión
  * POST /api/auth/verify
  */

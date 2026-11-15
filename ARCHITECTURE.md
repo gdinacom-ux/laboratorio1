@@ -90,34 +90,87 @@ graph TD
 
 ---
 
-## 3. Arquitectura de Datos y Persistencia Dual
+## 3. Arquitectura de Datos: SQLite 3 en Producción (WAL Mode)
 
-El backend implementa un mecanismo transparente de tolerancia a fallos en `server/src/db.js`:
+En la presente fase se ha descartado definitivamente MySQL, adoptando **SQLite 3 (`better-sqlite3`)** como motor único de base de datos para producción y desarrollo local:
+
+* **Ubicación Física:** `server/data/hamburger_rapid.sqlite` (con volumen persistente en Docker `/app/server/data`).
+* **Concurrencia:** Habilitado en modo **WAL (`journal_mode = WAL`)** con escrituras atómicas síncronas normales (`synchronous = NORMAL`) y claves foráneas activas.
+* **Modelo de Datos:** 8 tablas relacionales que soportan tanto el menú de hamburguesas como los 5 catálogos sincronizados desde iDempiere ERP:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant App as Servidor Express (app.js)
-    participant DBModule as Módulo DB (db.js)
-    participant MySQL as Servidor MySQL (3306)
-    participant Memory as Almacén In-Memory
+erDiagram
+    PRODUCTS ||--o{ ORDERS : "incluido en"
+    PRODUCT_CATEGORIES ||--o{ PRODUCTS : "clasifica"
+    PRICE_LISTS ||--|{ PRICE_LIST_VERSIONS : "contiene"
+    PRICE_LISTS ||--o{ PRODUCTS : "fija precio"
+    CUSTOMER_CATEGORIES ||--o{ CONSUMERS : "segmenta"
+    TAXES ||--o{ PRODUCTS : "grava"
 
-    App->>DBModule: initDB() al iniciar servidor
-    DBModule->>DBModule: Verificar credenciales (DB_HOST o DATABASE_URL)
-    alt Credenciales presentes
-        DBModule->>MySQL: Intentar conexión con timeout de 8s
-        alt Conexión Exitosa
-            MySQL-->>DBModule: Conexión aprobada
-            DBModule->>MySQL: CREATE TABLE IF NOT EXISTS products
-            DBModule->>MySQL: Sembrar productos si la tabla está vacía
-            DBModule-->>App: isConnectedToMySQL = true
-        else Conexión Fallida / Timeout
-            MySQL-->>DBModule: Error (ECONNREFUSED, auth, etc.)
-            DBModule-->>App: Fallback activado -> isConnectedToMySQL = false (Modo In-Memory)
-        end
-    else Sin credenciales
-        DBModule-->>App: Modo In-Memory automático con INITIAL_PRODUCTS
-    end
+    PRODUCTS {
+        int id PK
+        int idempiere_id
+        string name
+        string category
+        decimal price
+        int stock
+        string specialty_badge
+        string specialty_level
+        string synced_at
+    }
+
+    PRODUCT_CATEGORIES {
+        int id PK
+        int idempiere_id
+        string value UK
+        string name
+        string description
+        int is_active
+        string synced_at
+    }
+
+    PRICE_LISTS {
+        int id PK
+        int idempiere_id
+        string name
+        string currency_code
+        int is_so_pricelist
+        int is_default
+        int is_active
+        string synced_at
+    }
+
+    PRICE_LIST_VERSIONS {
+        int id PK
+        int idempiere_id
+        int price_list_id FK
+        string name
+        date valid_from
+        int is_active
+        string synced_at
+    }
+
+    CUSTOMER_CATEGORIES {
+        int id PK
+        int idempiere_id
+        string value UK
+        string name
+        string description
+        int is_default
+        int is_active
+        string synced_at
+    }
+
+    TAXES {
+        int id PK
+        int idempiere_id
+        string name
+        decimal rate
+        string tax_indicator
+        int is_active
+        string synced_at
+    }
+```
 ```
 
 ### 3.1. Tablas y Estructura de Datos
@@ -147,16 +200,19 @@ sequenceDiagram
         ERP-->>AuthRoute: 200 OK { token, userId, ... }
         AuthRoute-->>Service: Sesión normalizada con Token Bearer
         Service-->>AdminUI: AuthGuard desbloquea consola administrativa
-    else Modalidad 2: Login Asistido (2 Pasos)
+    else Modalidad 2: Login Asistido (2 Pasos - Documentación Oficial iDempiere REST)
         AdminUI->>Service: requestContextStep1(userName, password)
         Service->>AuthRoute: POST /api/auth/context
         AuthRoute->>ERP: POST /api/v1/auth/tokens { userName, password }
-        ERP-->>AuthRoute: Listas: clients, roles, organizations, warehouses
-        AuthRoute-->>AdminUI: Renderiza desplegables dinámicos (Paso 2)
-        AdminUI->>Service: completeLoginStep2(userName, password, selectedContext)
-        Service->>AuthRoute: POST /api/auth/login { userName, password, parameters: selectedContext }
-        AuthRoute->>ERP: POST /api/v1/auth/tokens (con parameters y organizationId)
-        ERP-->>AuthRoute: 200 OK con Token definitivo
+        ERP-->>AuthRoute: 200 OK con stage1Token y lista de clients
+        AuthRoute->>ERP: GET /api/v1/auth/roles?client=X (Bearer stage1Token)
+        AuthRoute->>ERP: GET /api/v1/auth/organizations?client=X&role=Y (Bearer stage1Token)
+        AuthRoute->>ERP: GET /api/v1/auth/warehouses?client=X&role=Y&org=Z (Bearer stage1Token)
+        AuthRoute-->>AdminUI: Renderiza Paso 2 con desplegables poblados
+        AdminUI->>Service: completeLoginStep2(stage1Token, selectedContext)
+        Service->>AuthRoute: POST /api/auth/step2 { stage1Token, parameters }
+        AuthRoute->>ERP: PUT /api/v1/auth/tokens con Authorization: Bearer stage1Token y body plano
+        ERP-->>AuthRoute: 200 OK con Token final y refreshToken
         AuthRoute-->>AdminUI: Sesión activa y contextualizada
     end
 ```
@@ -172,19 +228,40 @@ sequenceDiagram
 
 | Método | Endpoint | Descripción | Componente Consumidor |
 |---|---|---|---|
-| `GET` | `/api/health` | Estado del servidor, tiempo activo y modo de BD | Admin, Dokploy, Monitoreo |
-| `GET` | `/api/products` | Lista de productos (10 variantes gourmet) | Landing, PWA, Admin |
+| `GET` | `/api/health` | Estado del servidor, tiempo activo y modo de BD (SQLite) | Admin, Dokploy, Monitoreo |
+| `GET` | `/api/products` | Lista de productos (compatibilidad retroactiva) | Landing, PWA, Admin |
 | `POST` | `/api/products` | Registro de nueva hamburguesa | Admin |
 | `DELETE` | `/api/products/:id` | Eliminación de producto por ID | Admin |
 | `POST` | `/api/reset` | Restablece catálogo original de hamburguesas | Admin |
+| `GET` | `/api/catalogs/product-categories` | Catálogo de Categorías de Productos (M_Product_Category) | Admin, PWA |
+| `POST` | `/api/catalogs/product-categories` | Crear categoría de producto (Mantenible) | Admin |
+| `PUT` | `/api/catalogs/product-categories/:id` | Actualizar categoría de producto (Mantenible) | Admin |
+| `DELETE` | `/api/catalogs/product-categories/:id` | Eliminar categoría de producto (Mantenible) | Admin |
+| `GET` | `/api/catalogs/products` | Catálogo maestro de productos (M_Product) | Admin, PWA, Ecommerce |
+| `POST` | `/api/catalogs/products` | Crear producto en catálogo maestro (Mantenible) | Admin |
+| `PUT` | `/api/catalogs/products/:id` | Actualizar producto (Mantenible) | Admin |
+| `DELETE` | `/api/catalogs/products/:id` | Eliminar producto (Mantenible) | Admin |
+| `GET` | `/api/catalogs/price-lists` | Listas de precios y versiones (M_PriceList) | Admin, PWA |
+| `POST` | `/api/catalogs/price-lists` | Crear lista de precios (Mantenible) | Admin |
+| `PUT` | `/api/catalogs/price-lists/:id` | Actualizar lista de precios (Mantenible) | Admin |
+| `DELETE` | `/api/catalogs/price-lists/:id` | Eliminar lista de precios (Mantenible) | Admin |
+| `POST` | `/api/catalogs/price-lists/:id/versions` | Crear versión de lista de precios (Mantenible) | Admin |
+| `DELETE` | `/api/catalogs/price-list-versions/:id` | Eliminar versión de lista de precios (Mantenible) | Admin |
+| `GET` | `/api/catalogs/customer-categories` | Categorías de Clientes (C_BP_Group) | Admin, PWA |
+| `POST` | `/api/catalogs/customer-categories` | Crear categoría de cliente (Mantenible) | Admin |
+| `PUT` | `/api/catalogs/customer-categories/:id` | Actualizar categoría de cliente (Mantenible) | Admin |
+| `DELETE` | `/api/catalogs/customer-categories/:id` | Eliminar categoría de cliente (Mantenible) | Admin |
+| `GET` | `/api/catalogs/taxes` | Tasas impositivas (C_Tax) - **SOLO LECTURA** | Admin, PWA |
+| `POST` | `/api/catalogs/sync-all` | Sincronización maestra de los 5 catálogos iDempiere hacia SQLite | Admin |
 | `GET` | `/api/consumers` | Lista de consumidores registrados | Admin |
 | `GET` | `/api/metrics/consumers` | Métricas agregadas y segmentación de clientes | Admin |
 | `GET` | `/api/orders` | Historial de pedidos unificados (PWA y E-commerce) | PWA, Admin |
 | `POST` | `/api/orders` | Creación de orden (desde PWA o E-commerce) | PWA, E-commerce |
 | `PATCH` | `/api/orders/:id/status` | Actualización de estado operativo del pedido | Admin |
 | `POST` | `/api/orders/:id/sync-erp` | Sincroniza pedido a iDempiere ERP y genera C_Order | Admin |
-| `POST` | `/api/auth/login` | Login contra iDempiere ERP (1 paso o paso 2) | Admin, Futura PWA |
-| `POST` | `/api/auth/context` | Consulta de contexto multitenant (Paso 1) | Admin, Futura PWA |
+| `POST` | `/api/auth/login` | Login directo en 1 paso contra iDempiere ERP | Admin, PWA |
+| `POST` | `/api/auth/context` | Consulta de contexto multitenant (Paso 1) | Admin, PWA |
+| `POST` | `/api/auth/step2` | Confirmación en 2 pasos (PUT /tokens) oficial | Admin, PWA |
 | `POST` | `/api/auth/verify` | Validación del token de sesión | Admin |
 | `GET` | `/api/auth/config` | Configuración y credenciales demo GardenWorld | Admin |
 | `POST` | `/api/auth/test-connection` | Comprobación de alcance a URL de iDempiere | Admin |

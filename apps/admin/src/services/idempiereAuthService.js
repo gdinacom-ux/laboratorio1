@@ -287,12 +287,79 @@ export async function requestContextStep1(credentials, connectionMode = 'proxy')
 
 /**
  * Paso 2: Enviar contexto elegido por el usuario para obtener el Token definitivo
+ * Conforme a la documentación oficial iDempiere REST (bxservice.github.io/idempiere-rest-docs):
+ * Ejecuta PUT /api/v1/auth/tokens con Authorization: Bearer <stage1Token>
  */
 export async function completeLoginStep2(credentials, selectedContext, connectionMode = 'proxy') {
-  return loginDirect({
-    ...credentials,
-    parameters: selectedContext
-  }, connectionMode);
+  const { userName, password, erpBaseUrl, stage1Token } = credentials;
+  const cleanBase = normalizeErpBaseUrl(erpBaseUrl);
+
+  const formattedParams = {
+    clientId: Number(selectedContext.clientId ?? 11),
+    roleId: Number(selectedContext.roleId ?? 102),
+    organizationId: Number(selectedContext.organizationId ?? selectedContext.orgId ?? 11),
+    warehouseId: Number(selectedContext.warehouseId ?? 103),
+    language: selectedContext.language || 'en_US'
+  };
+
+  // MODO DIRECTO: Probar PUT directo si se solicita y hay stage1Token
+  if (connectionMode === 'direct' && stage1Token && stage1Token !== 'sandbox_temp_token') {
+    const targetEndpoint = `${cleanBase}/api/v1/auth/tokens`;
+    try {
+      const response = await fetch(targetEndpoint, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${stage1Token}`
+        },
+        body: JSON.stringify(formattedParams)
+      });
+
+      const resJson = await response.json().catch(() => ({}));
+      if (response.ok && resJson.token) {
+        return {
+          token: resJson.token,
+          tokenType: 'Bearer',
+          refreshToken: resJson.refresh_token || null,
+          userId: resJson.userId || 101,
+          userName: userName || 'Usuario iDempiere',
+          parameters: formattedParams,
+          simulated: false,
+          client: { id: formattedParams.clientId, name: 'GardenWorld, Inc.' },
+          role: { id: formattedParams.roleId, name: formattedParams.roleId === 102 ? 'GardenWorld Admin' : `Rol #${formattedParams.roleId}` },
+          organization: { id: formattedParams.organizationId, name: `HQ Org #${formattedParams.organizationId}` },
+          warehouse: { id: formattedParams.warehouseId, name: `Almacén #${formattedParams.warehouseId}` },
+          language: formattedParams.language
+        };
+      }
+    } catch (directErr) {
+      console.warn('[AuthService] Paso 2 directo falló (' + directErr.message + '). Auto-recuperando vía Proxy Backend...');
+    }
+  }
+
+  // MODO PROXY BACKEND (100% seguro contra CORS y contingencias):
+  const response = await fetch('/api/auth/step2', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      stage1Token,
+      parameters: formattedParams,
+      erpBaseUrl: cleanBase,
+      userName,
+      password
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Error al completar el Paso 2 en iDempiere ERP');
+  }
+
+  return data.data;
 }
 
 /**

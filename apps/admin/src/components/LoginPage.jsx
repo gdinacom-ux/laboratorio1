@@ -35,6 +35,7 @@ export default function LoginPage() {
 
   // Estado para Modalidad 2 (2 Pasos)
   const [currentStep, setCurrentStep] = useState(1); // 1 = Credenciales, 2 = Selección de Contexto
+  const [stage1Token, setStage1Token] = useState(null);
   const [availableContext, setAvailableContext] = useState(null);
   const [selectedContext, setSelectedContext] = useState({
     clientId: 11,
@@ -117,6 +118,7 @@ export default function LoginPage() {
     if (result.success && !result.authenticated) {
       const data = result.contextData;
       setAvailableContext(data);
+      setStage1Token(data.stage1Token || null);
       // Auto-seleccionar primer elemento disponible
       setSelectedContext({
         clientId: data.clients?.[0]?.id ?? 11,
@@ -136,7 +138,7 @@ export default function LoginPage() {
     setErrorDetails(null);
 
     await completeLoginStep2(
-      { userName, password, erpBaseUrl },
+      { userName, password, erpBaseUrl, stage1Token },
       selectedContext,
       connectionMode
     );

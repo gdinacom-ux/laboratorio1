@@ -35,28 +35,34 @@ COPY apps/admin/ ./
 RUN npm run build
 
 # ========================================================
-# ETAPA 4: Runtime Final (Node.js API + Servidor Unificado)
+# ETAPA 4: Runtime Final (Node.js API + Servidor Unificado con SQLite)
 # ========================================================
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV SQLITE_DB_PATH=/app/server/data/hamburger_rapid.sqlite
+
+# Instalar librerías nativas para SQLite en Alpine Linux
+RUN apk add --no-cache python3 make g++ sqlite
 
 # 1. Instalar dependencias del servidor backend
 COPY server/package*.json ./server/
 RUN cd server && if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
-# 2. Copiar código fuente del backend
+# 2. Copiar código fuente del backend y preparar directorio para base de datos SQLite persistente
 COPY server/ ./server/
+RUN mkdir -p /app/server/data
 
 # 3. Copiar las 3 capas compiladas al directorio público del backend
 COPY --from=builder-ecommerce /app/ecommerce/dist ./server/public/ecommerce
 COPY --from=builder-pwa /app/pwa/dist ./server/public/pwa
 COPY --from=builder-admin /app/admin/dist ./server/public/admin
 
-# 4. Exponer puerto HTTP estándar
+# 4. Exponer puerto HTTP estándar y volumen para base de datos SQLite
 EXPOSE 3000
+VOLUME ["/app/server/data"]
 
 # 5. Iniciar la plataforma
 CMD ["node", "server/src/app.js"]

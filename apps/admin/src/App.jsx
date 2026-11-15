@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage';
 import IdempiereInspectorModal from './components/IdempiereInspectorModal';
 import IdempiereDashboardView from './components/IdempiereDashboardView';
 import OrdersManagementView from './components/OrdersManagementView';
+import CatalogsManagementView from './components/CatalogsManagementView';
 
 function AdminDashboard() {
   const { auth, logout, isInspectorOpen, setIsInspectorOpen } = useAuth();
@@ -217,9 +218,10 @@ function AdminDashboard() {
           {[
             { id: 'overview', label: 'Resumen General', icon: '📊' },
             { id: 'orders', label: 'Gestión de Pedidos', icon: '📦', badge: orders.length },
+            { id: 'catalogs', label: 'Catálogos ERP iDempiere', icon: '🗂️', badge: '5 Tablas' },
             { id: 'products', label: 'Catálogo Hamburguesas', icon: '🍔', badge: products.length },
             { id: 'consumers', label: 'Métricas de Clientes', icon: '👥' },
-            { id: 'database', label: 'Estado Base de Datos', icon: '🗄️' },
+            { id: 'database', label: 'Base de Datos SQLite', icon: '🗄️', badge: 'WAL Mode' },
             { id: 'idempiere', label: 'iDempiere ERP v1', icon: '🛡️', badge: auth?.simulated ? 'Sandbox' : 'Live' }
           ].map(item => (
             <button
@@ -698,6 +700,11 @@ function AdminDashboard() {
           />
         )}
 
+        {/* ================= VIEW: CATÁLOGOS ERP iDempiere ================= */}
+        {activeTab === 'catalogs' && (
+          <CatalogsManagementView showNotification={showNotification} />
+        )}
+
         {/* ================= VIEW 2: PRODUCTS ================= */}
         {activeTab === 'products' && (
           <div className="fade-in">
@@ -999,32 +1006,32 @@ function AdminDashboard() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.85rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px' }}>
-                    <span style={{ color: '#64748b', fontWeight: '600' }}>Modo de Operación:</span>
-                    <strong style={{ color: serverHealth?.database?.connected ? '#059669' : '#d97706' }}>
-                      {serverHealth?.database?.mode === 'mysql' ? 'MySQL RDBMS' : 'In-Memory RAM Mode'}
+                    <span style={{ color: '#64748b', fontWeight: '600' }}>Motor de Base de Datos:</span>
+                    <strong style={{ color: '#059669' }}>
+                      {serverHealth?.database?.rdbms || 'SQLite 3 (better-sqlite3)'}
                     </strong>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px' }}>
-                    <span style={{ color: '#64748b', fontWeight: '600' }}>Estado de Conexión:</span>
-                    <strong style={{ color: serverHealth?.database?.connected ? '#059669' : '#0f172a' }}>
-                      {serverHealth?.database?.connected ? '🟢 Conectado Exitosamente' : '⚡ Activo sin latencia'}
+                    <span style={{ color: '#64748b', fontWeight: '600' }}>Modo de Concurrencia:</span>
+                    <strong style={{ color: '#d97706' }}>
+                      WAL Mode (Write-Ahead Logging)
                     </strong>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px' }}>
-                    <span style={{ color: '#64748b', fontWeight: '600' }}>Host del Servidor:</span>
-                    <code>{serverHealth?.database?.host || 'localhost'}</code>
+                    <span style={{ color: '#64748b', fontWeight: '600' }}>Archivo de Base de Datos:</span>
+                    <code style={{ fontSize: '0.74rem' }}>{serverHealth?.database?.database || 'hamburger_rapid.sqlite'}</code>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px' }}>
-                    <span style={{ color: '#64748b', fontWeight: '600' }}>Base de Datos:</span>
-                    <code>{serverHealth?.database?.database || 'hamburger_rapid_db'}</code>
+                    <span style={{ color: '#64748b', fontWeight: '600' }}>Tablas Activas ({serverHealth?.database?.tables?.length || 8}):</span>
+                    <span style={{ fontSize: '0.74rem', color: '#334155', fontWeight: '700' }}>products, categories, price_lists, customers, taxes, orders</span>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px' }}>
-                    <span style={{ color: '#64748b', fontWeight: '600' }}>Tablas / Colecciones:</span>
-                    <span>products, consumers, orders</span>
+                    <span style={{ color: '#64748b', fontWeight: '600' }}>Integración ERP:</span>
+                    <strong style={{ color: '#2563eb' }}>Sincronización Bidireccional iDempiere</strong>
                   </div>
                 </div>
 

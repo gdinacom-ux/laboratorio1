@@ -489,6 +489,155 @@ async function testIdempiereConnection(erpBaseUrl = DEFAULT_IDEMPIERE_CONFIG.bas
   }
 }
 
+/**
+ * Paso 2 de la Autenticación Asistida (Multitenant):
+ * Conforme a la documentación oficial iDempiere REST (bxservice.github.io/idempiere-rest-docs):
+ * Endpoint: PUT /api/v1/auth/tokens
+ * Headers:
+ *   Authorization: Bearer <stage1Token>
+ *   Content-Type: application/json
+ *   Accept: application/json
+ * Body (Plano, sin envoltorio "parameters"):
+ *   {
+ *     clientId: number,
+ *     roleId: number,
+ *     organizationId: number,
+ *     warehouseId: number,
+ *     language: string
+ *   }
+ */
+async function authenticateStep2(stage1Token, contextParams = {}, options = {}) {
+  const erpBaseUrl = cleanErpBaseUrl(options.baseUrl || DEFAULT_IDEMPIERE_CONFIG.baseUrl);
+  const fullEndpoint = `${erpBaseUrl}/api/v1/auth/tokens`;
+
+  // Normalizar parámetros de contexto
+  const rawParams = { ...DEFAULT_IDEMPIERE_CONFIG.defaultParameters, ...contextParams };
+  const organizationId = Number(rawParams.organizationId ?? rawParams.orgId ?? 11);
+  const clientId = Number(rawParams.clientId ?? 11);
+  const roleId = Number(rawParams.roleId ?? 102);
+  const warehouseId = Number(rawParams.warehouseId ?? 103);
+  const language = String(rawParams.language || 'en_US').trim();
+
+  const putPayload = {
+    clientId,
+    roleId,
+    organizationId,
+    warehouseId,
+    language
+  };
+
+  // Si estamos en modo sandbox simulado o el token es ficticio
+  if (!stage1Token || stage1Token === 'sandbox_temp_token' || stage1Token.startsWith('mock_')) {
+    const mockPayload = {
+      userName: options.userName || 'admin @ gardenworld.com',
+      password: options.password || 'GardenAdmin',
+      parameters: putPayload
+    };
+    return generateMockIdempiereResponse(mockPayload, erpBaseUrl);
+  }
+
+  const payloadString = JSON.stringify(putPayload);
+  const headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'Authorization': `Bearer ${stage1Token}`,
+    'Content-Length': Buffer.byteLength(payloadString)
+  };
+
+  try {
+    const response = await makeHttpRequest(fullEndpoint, 'PUT', headers, payloadString, options.timeout || 7000);
+
+    if (response.statusCode === 200 || response.statusCode === 201) {
+      const data = response.data || {};
+      const finalToken = data.token;
+      if (!finalToken) {
+        throw new Error('iDempiere respondió con éxito pero no devolvió el atributo "token" en el cuerpo JSON.');
+      }
+
+      return {
+        success: true,
+        token: finalToken,
+        refreshToken: data.refresh_token || null,
+        tokenType: 'Bearer',
+        rawResponse: data,
+        userId: data.userId || 101,
+        userName: options.userName || data.userName || 'admin @ gardenworld.com',
+        parameters: putPayload,
+        role: {
+          id: roleId,
+          name: roleId === 102 ? 'GardenWorld Admin' : `Rol #${roleId}`
+        },
+        client: {
+          id: clientId,
+          name: clientId === 11 ? 'GardenWorld, Inc.' : `Cliente #${clientId}`
+        },
+        organization: {
+          id: organizationId,
+          name: organizationId === 11 ? 'HQ - Headquarters' : `Org #${organizationId}`
+        },
+        warehouse: {
+          id: warehouseId,
+          name: warehouseId === 103 ? 'HQ Warehouse' : `Almacén #${warehouseId}`
+        },
+        simulated: false,
+        audit: {
+          endpointCalled: fullEndpoint,
+          method: 'PUT',
+          httpStatus: response.statusCode,
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+
+    // Si el token temporal expiró y tenemos credenciales de respaldo
+    if ((response.statusCode === 401 || response.statusCode === 403) && options.userName && options.password) {
+      console.warn('[iDempiereService] PUT /tokens devolvió 401/403, intentando fallback con autenticación directa...');
+      return authenticateIdempiere(options.userName, options.password, putPayload, options);
+    }
+
+    throw new Error(`iDempiere PUT /api/v1/auth/tokens respondió con HTTP ${response.statusCode}: ${JSON.stringify(response.data)}`);
+  } catch (err) {
+    if (options.userName && options.password && options.allowFallback !== false) {
+      console.warn(`[iDempiereService] Reintentando Paso 2 vía loginDirect debido a: ${err.message}`);
+      return authenticateIdempiere(options.userName, options.password, putPayload, options);
+    }
+    if (options.allowFallback !== false) {
+      const mockPayload = {
+        userName: options.userName || 'admin @ gardenworld.com',
+        password: options.password || 'GardenAdmin',
+        parameters: putPayload
+      };
+      return generateMockIdempiereResponse(mockPayload, erpBaseUrl);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Consulta un modelo de tabla estándar de iDempiere ERP (ej: M_Product_Category, M_Product, M_PriceList, C_BP_Group, C_Tax)
+ */
+async function fetchIdempiereModel(modelName, token, query = '$top=100', erpBaseUrl = DEFAULT_IDEMPIERE_CONFIG.baseUrl) {
+  const cleanUrl = cleanErpBaseUrl(erpBaseUrl);
+  const targetUrl = `${cleanUrl}/api/v1/models/${modelName}${query ? `?${query}` : ''}`;
+
+  const headers = {
+    'Accept': 'application/json',
+    'Authorization': `Bearer ${token}`
+  };
+
+  try {
+    const response = await makeHttpRequest(targetUrl, 'GET', headers, null, 8000);
+    if (response.statusCode === 200) {
+      const data = response.data || {};
+      const records = data.records || (Array.isArray(data) ? data : []);
+      return { success: true, records, count: records.length, raw: data };
+    }
+    return { success: false, statusCode: response.statusCode, error: response.data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   cleanErpBaseUrl,
   DEFAULT_IDEMPIERE_CONFIG,
@@ -496,5 +645,7 @@ module.exports = {
   sanitizeAndValidatePayload,
   getAvailableContext,
   authenticateIdempiere,
+  authenticateStep2,
+  fetchIdempiereModel,
   testIdempiereConnection
 };

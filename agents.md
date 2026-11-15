@@ -22,7 +22,7 @@ Bienvenido al archivo de gobernanza, directivas y memoria técnica para agentes 
 | **Autor Original** | Galo Gordon O / NextCollege Masterclass |
 | **Arquitectura** | Monorepo desacoplado de 4 capas + Servidor unificado |
 | **Lenguajes / Runtimes** | Node.js (v20+), JavaScript (ESM y CJS), Astro, React 18 |
-| **Base de Datos** | MySQL con tolerancia a fallos y fallback automático In-Memory |
+| **Base de Datos** | SQLite 3 (better-sqlite3) en producción con WAL mode y persistencia de catálogos |
 | **Integraciones** | iDempiere ERP REST API v1 (GardenWorld Sandbox / Live) |
 | **Despliegue** | Dokploy / Docker multi-stage build |
 
@@ -61,8 +61,10 @@ laboratorio1/
    - **Nombre de campo de organización:** Utilizar exclusivamente `organizationId`. El campo `orgId` genera errores HTTP 400 en `com.trekglobal.idempiere.rest.api.v1.auth.LoginCredential`.
    - **Estructura de contexto:** Los valores `clientId`, `roleId`, `organizationId`, `warehouseId` y `language` deben ir agrupados dentro del objeto `parameters`.
    - **Tolerancia a fallos:** Mantener siempre el fallback hacia el mock de GardenWorld cuando el servidor ERP no sea alcanzable.
-4. **Persistencia Dual (MySQL & In-Memory):**
-   - Las operaciones en `server/src/db.js` deben contemplar tanto la conexión activa a MySQL como el fallback transparente en memoria para permitir desarrollo local instantáneo sin dependencias externas.
+4. **Persistencia Exclusiva en SQLite 3 (better-sqlite3):**
+   - MySQL ha sido completamente descartado de la arquitectura.
+   - Las operaciones de base de datos residen en `server/src/db.js` utilizando `better-sqlite3` con modo WAL (`journal_mode = WAL`) en `server/data/hamburger_rapid.sqlite`.
+   - Soporte nativo para los 5 Catálogos Maestros de iDempiere ERP (categorías, productos, listas de precios/versiones, categorías clientes e impuestos).
 5. **Ciclo de Compilación y Servidor:**
    - El servidor Express en `server/src/app.js` busca las compilaciones en `server/public/{ecommerce,pwa,admin}`. Si se modifican los frontends, recordar ejecutar `npm run build:all` o el script de build respectivo para sincronizar los artefactos estáticos.
 
@@ -84,6 +86,36 @@ laboratorio1/
 ## 📜 Bitácora de Acciones de Agentes (Changelog)
 
 Registro cronológico obligatorio de intervenciones ejecutadas por agentes de IA:
+
+### [2026-11-14] - Transición a SQLite en Producción, Corrección Estricta de Autenticación 2 Pasos (PUT /tokens) y Catálogos Maestros ERP con Mantenimiento
+- **Agente:** Antigravity (Google DeepMind)
+- **Alcance y Delimitación:** Backend (`server`), infraestructura de datos (`better-sqlite3`, `Dockerfile`), rutas y controladores de catálogos (`server/src/routes/catalogs.js`), y Panel de Administración (`apps/admin`). Las aplicaciones `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**.
+- **Diagnóstico y Corrección de Autenticación en 2 Pasos (bxservice iDempiere REST Docs):**
+  1. *Causa raíz del fallo en 2 pasos:* Conforme a la documentación oficial de iDempiere REST (`bxservice.github.io/idempiere-rest-docs/docs/api-guides/authentication`), el Paso 2 de la autenticación **NO ES UN POST** ni debe volver a enviar usuario/contraseña con parámetros anidados en `parameters`.
+  2. *Especificación oficial implementada:* 
+     - **Paso 1:** `POST /api/v1/auth/tokens` con `{ userName, password }` devuelve `{ token, clients }`. Se captura el token como `stage1Token` y se consultan dinámicamente roles (`GET /api/v1/auth/roles?client=X`), organizaciones y almacenes.
+     - **Paso 2:** **`PUT /api/v1/auth/tokens`** con encabezado `Authorization: Bearer <stage1Token>` y un cuerpo JSON plano: `{ clientId, roleId, organizationId, warehouseId, language }`.
+  3. *Endpoints y librerías:* Se implementó `authenticateStep2` en `idempiereService.js`, la ruta `POST /api/auth/step2` en Express, y la actualización de `completeLoginStep2` en `idempiereAuthService.js` y `LoginPage.jsx`.
+- **Descarte de MySQL y Adopción de SQLite 3 para Producción:**
+  1. Se eliminó la dependencia `mysql2` y se adoptó `better-sqlite3` en `server/package.json`.
+  2. Base de datos persistente en archivo local `server/data/hamburger_rapid.sqlite` configurada en modo WAL (`journal_mode = WAL`) para escrituras concurrentes de alta velocidad.
+  3. Actualización de `Dockerfile` incorporando `apk add --no-cache python3 make g++ sqlite` y volumen `/app/server/data` para persistencia en contenedores Dokploy/Docker.
+- **Sincronización y Mantenimiento de Catálogos Maestros iDempiere ERP:**
+  1. **5 Tablas Maestras Implementadas en SQLite:**
+     - 🏷️ `product_categories` (`M_Product_Category`): Mantenible (CRUD).
+     - 📦 `products` (`M_Product`): Mantenible (CRUD).
+     - 💰 `price_lists` y `price_list_versions` (`M_PriceList` & `M_PriceList_Version`): Mantenible (CRUD + gestor de versiones).
+     - 👥 `customer_categories` (`C_BP_Group`): Mantenible (CRUD).
+     - 📑 `taxes` (`C_Tax`): **Solo Lectura** (visualización fiscal estricta, bloqueados métodos POST/PUT/DELETE con código HTTP 403).
+  2. **Motor de Sincronización:** Endpoint `POST /api/catalogs/sync-all` y `fetchIdempiereModel` en `idempiereService.js` que recupera en tiempo real los registros de iDempiere REST y los actualiza en SQLite.
+  3. **Interfaz en Panel Admin:** Nueva vista interactiva [`CatalogsManagementView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/CatalogsManagementView.jsx) integrada en la barra lateral de navegación con modales de creación, edición, eliminación y botón destacado de *Sincronización Maestra (5 Catálogos)*.
+- **Compilación y Verificación:**
+  - Build de Vite (`apps/admin/dist`) completado en 3.04s.
+  - Sincronización estática en `server/public/admin`.
+  - Pruebas automatizadas de autenticación en 2 pasos contra `test.idempiere.org` (método `PUT`, token Bearer definitivo obtenido con éxito).
+- **Estado de la Solución:** Validada, verificada y documentada en su totalidad.
+
+---
 
 ### [2026-11-13] - Corrección de Flujo en 2 Pasos y Eliminación de Error "Failed to fetch"
 - **Agente:** Antigravity (Google DeepMind)
