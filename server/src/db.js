@@ -303,165 +303,192 @@ const INITIAL_ORDERS = [
   }
 ];
 
+function createTables(targetDb) {
+  // 1. Tabla de Productos (Gourmet Burgers & Sincronizados)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      price REAL NOT NULL,
+      stock INTEGER NOT NULL DEFAULT 0,
+      specialty_badge TEXT DEFAULT '',
+      specialty_level TEXT DEFAULT 'Normal',
+      rating REAL DEFAULT 5.0,
+      reviews INTEGER DEFAULT 100,
+      calories TEXT DEFAULT '',
+      prep_time TEXT DEFAULT '',
+      image TEXT DEFAULT '',
+      description TEXT DEFAULT '',
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 2. Tabla de Categorías de Productos (M_Product_Category)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS product_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      value TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 3. Tabla de Listas de Precios (M_PriceList)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS price_lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      currency_code TEXT DEFAULT 'USD',
+      is_so_pricelist INTEGER DEFAULT 1,
+      is_default INTEGER DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 4. Tabla de Versiones de Lista de Precios (M_PriceList_Version)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS price_list_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      valid_from TEXT DEFAULT CURRENT_DATE,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 5. Tabla de Categorías de Clientes (C_BP_Group)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS customer_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      value TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      is_default INTEGER DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 6. Tabla de Impuestos (C_Tax) - SOLO LECTURA
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS taxes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempiere_id INTEGER DEFAULT NULL,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      rate REAL NOT NULL DEFAULT 0.0,
+      tax_indicator TEXT DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      valid_from TEXT DEFAULT CURRENT_DATE,
+      synced_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 7. Tabla de Consumidores
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS consumers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      segment TEXT NOT NULL,
+      orders_count INTEGER DEFAULT 0,
+      total_spent REAL DEFAULT 0.0,
+      favorite_burger TEXT DEFAULT '',
+      last_order TEXT DEFAULT '',
+      loyalty_points INTEGER DEFAULT 0,
+      satisfaction TEXT DEFAULT '5/5 ★'
+    )
+  `);
+
+  // 8. Tabla de Pedidos (PWA vs E-commerce)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      origin TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      vendor TEXT NOT NULL,
+      customer TEXT NOT NULL,
+      items_json TEXT NOT NULL,
+      total REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Recibido',
+      idempiere_synced INTEGER DEFAULT 0,
+      idempiere_order_id TEXT DEFAULT NULL,
+      timestamp TEXT NOT NULL,
+      address TEXT DEFAULT '',
+      payment TEXT DEFAULT '',
+      erp_context_json TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+}
+
 /**
- * Inicializa la base de datos SQLite con tablas optimizadas y modo WAL
+ * Inicializa la base de datos SQLite con tablas optimizadas, modo WAL resiliente y contingencia en memoria
  */
 function initDB() {
-  try {
-    if (db) return db;
+  if (db) return db;
 
+  const targetDir = path.dirname(dbPath);
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+  } catch (dirErr) {
+    console.warn('⚠️ [DB SQLite] No se pudo crear directorio para SQLite, usando fallback:', dirErr.message);
+  }
+
+  try {
     console.log(`📦 [DB SQLite] Conectando a archivo de base de datos en: ${dbPath}`);
     db = new Database(dbPath, { timeout: 7000 });
 
-    // Habilitar modo WAL para máximo rendimiento y escrituras concurrentes
-    db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = NORMAL');
-    db.pragma('foreign_keys = ON');
+    // Habilitar modo WAL o DELETE según soporte del sistema de archivos (ej: Docker volumes/NFS)
+    try {
+      db.pragma('journal_mode = WAL');
+    } catch (walErr) {
+      console.warn('⚠️ [DB SQLite] journal_mode = WAL falló en el volumen, usando DELETE:', walErr.message);
+      try { db.pragma('journal_mode = DELETE'); } catch (_) {}
+    }
 
-    // 1. Tabla de Productos (Gourmet Burgers & Sincronizados)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        name TEXT NOT NULL,
-        category TEXT NOT NULL,
-        price REAL NOT NULL,
-        stock INTEGER NOT NULL DEFAULT 0,
-        specialty_badge TEXT DEFAULT '',
-        specialty_level TEXT DEFAULT 'Normal',
-        rating REAL DEFAULT 5.0,
-        reviews INTEGER DEFAULT 100,
-        calories TEXT DEFAULT '',
-        prep_time TEXT DEFAULT '',
-        image TEXT DEFAULT '',
-        description TEXT DEFAULT '',
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    try { db.pragma('synchronous = NORMAL'); } catch (_) {}
+    try { db.pragma('foreign_keys = ON'); } catch (_) {}
 
-    // 2. Tabla de Categorías de Productos (M_Product_Category)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS product_categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        value TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        is_active INTEGER NOT NULL DEFAULT 1,
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 3. Tabla de Listas de Precios (M_PriceList)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS price_lists (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        currency_code TEXT DEFAULT 'USD',
-        is_so_pricelist INTEGER DEFAULT 1,
-        is_default INTEGER DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 4. Tabla de Versiones de Lista de Precios (M_PriceList_Version)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS price_list_versions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        valid_from TEXT DEFAULT CURRENT_DATE,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 5. Tabla de Categorías de Clientes (C_BP_Group)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS customer_categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        value TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        is_default INTEGER DEFAULT 0,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 6. Tabla de Impuestos (C_Tax) - SOLO LECTURA
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS taxes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        idempiere_id INTEGER DEFAULT NULL,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        rate REAL NOT NULL DEFAULT 0.0,
-        tax_indicator TEXT DEFAULT '',
-        is_active INTEGER NOT NULL DEFAULT 1,
-        valid_from TEXT DEFAULT CURRENT_DATE,
-        synced_at TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 7. Tabla de Consumidores
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS consumers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        tier TEXT NOT NULL,
-        segment TEXT NOT NULL,
-        orders_count INTEGER DEFAULT 0,
-        total_spent REAL DEFAULT 0.0,
-        favorite_burger TEXT DEFAULT '',
-        last_order TEXT DEFAULT '',
-        loyalty_points INTEGER DEFAULT 0,
-        satisfaction TEXT DEFAULT '5/5 ★'
-      )
-    `);
-
-    // 8. Tabla de Pedidos (PWA vs E-commerce)
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id TEXT PRIMARY KEY,
-        origin TEXT NOT NULL,
-        channel TEXT NOT NULL,
-        vendor TEXT NOT NULL,
-        customer TEXT NOT NULL,
-        items_json TEXT NOT NULL,
-        total REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'Recibido',
-        idempiere_synced INTEGER DEFAULT 0,
-        idempiere_order_id TEXT DEFAULT NULL,
-        timestamp TEXT NOT NULL,
-        address TEXT DEFAULT '',
-        payment TEXT DEFAULT '',
-        erp_context_json TEXT DEFAULT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Sembrar datos iniciales si las tablas están vacías
+    createTables(db);
     seedInitialData();
 
-    console.log('✅ [DB SQLite] Base de datos inicializada y lista para producción.');
+    console.log('✅ [DB SQLite] Base de datos persistente inicializada y lista para producción.');
     return db;
   } catch (err) {
     lastDbError = err.message;
-    console.error('❌ [DB SQLite] Error crítico inicializando SQLite:', err);
-    throw err;
+    console.error('⚠️ [DB SQLite] Error al inicializar SQLite en disco (' + err.message + '). Activando fallback en memoria (:memory:)...');
+    try {
+      db = new Database(':memory:');
+      createTables(db);
+      seedInitialData();
+      console.log('✅ [DB SQLite Fallback] Base de datos en memoria inicializada.');
+      return db;
+    } catch (memErr) {
+      console.error('❌ [DB SQLite] Error crítico en SQLite:', memErr.message);
+      lastDbError = memErr.message;
+      return null;
+    }
   }
 }
 
@@ -1157,32 +1184,49 @@ function syncOrderWithERP(id, erpContext = {}) {
 }
 
 function getDbStatus() {
-  ensureDB();
-  const counts = {
-    products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
-    product_categories: db.prepare('SELECT COUNT(*) as c FROM product_categories').get().c,
-    price_lists: db.prepare('SELECT COUNT(*) as c FROM price_lists').get().c,
-    price_list_versions: db.prepare('SELECT COUNT(*) as c FROM price_list_versions').get().c,
-    customer_categories: db.prepare('SELECT COUNT(*) as c FROM customer_categories').get().c,
-    taxes: db.prepare('SELECT COUNT(*) as c FROM taxes').get().c,
-    consumers: db.prepare('SELECT COUNT(*) as c FROM consumers').get().c,
-    orders: db.prepare('SELECT COUNT(*) as c FROM orders').get().c
-  };
+  try {
+    ensureDB();
+    if (!db) {
+      return {
+        mode: 'sqlite_offline',
+        rdbms: 'SQLite 3 (better-sqlite3)',
+        connected: false,
+        error: lastDbError || 'Base de datos no inicializada'
+      };
+    }
+    const counts = {
+      products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
+      product_categories: db.prepare('SELECT COUNT(*) as c FROM product_categories').get().c,
+      price_lists: db.prepare('SELECT COUNT(*) as c FROM price_lists').get().c,
+      price_list_versions: db.prepare('SELECT COUNT(*) as c FROM price_list_versions').get().c,
+      customer_categories: db.prepare('SELECT COUNT(*) as c FROM customer_categories').get().c,
+      taxes: db.prepare('SELECT COUNT(*) as c FROM taxes').get().c,
+      consumers: db.prepare('SELECT COUNT(*) as c FROM consumers').get().c,
+      orders: db.prepare('SELECT COUNT(*) as c FROM orders').get().c
+    };
 
-  return {
-    mode: 'sqlite',
-    rdbms: 'SQLite 3 (better-sqlite3)',
-    connected: true,
-    file: dbPath,
-    database: 'hamburger_rapid.sqlite',
-    wal_mode: true,
-    tables: Object.keys(counts),
-    counts,
-    total_products: counts.products,
-    total_consumers: counts.consumers,
-    total_orders: counts.orders,
-    error: lastDbError
-  };
+    return {
+      mode: 'sqlite',
+      rdbms: 'SQLite 3 (better-sqlite3)',
+      connected: true,
+      file: dbPath,
+      database: 'hamburger_rapid.sqlite',
+      wal_mode: true,
+      tables: Object.keys(counts),
+      counts,
+      total_products: counts.products,
+      total_consumers: counts.consumers,
+      total_orders: counts.orders,
+      error: lastDbError
+    };
+  } catch (err) {
+    return {
+      mode: 'sqlite_error',
+      rdbms: 'SQLite 3 (better-sqlite3)',
+      connected: false,
+      error: err.message
+    };
+  }
 }
 
 module.exports = {

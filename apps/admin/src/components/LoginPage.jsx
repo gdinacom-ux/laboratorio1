@@ -137,11 +137,15 @@ export default function LoginPage() {
     setAuthError(null);
     setErrorDetails(null);
 
-    await completeLoginStep2(
+    const result = await completeLoginStep2(
       { userName, password, erpBaseUrl, stage1Token },
       selectedContext,
       connectionMode
     );
+
+    if (result && !result.success && result.details) {
+      setErrorDetails(result.details);
+    }
   };
 
   return (

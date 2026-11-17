@@ -148,7 +148,7 @@ export function AuthProvider({ children }) {
       setIsLoading(false);
       const message = err.message || 'Error al completar inicio de sesión en iDempiere';
       setAuthError(message);
-      return { success: false, error: message };
+      return { success: false, error: message, details: err.details };
     }
   };
 

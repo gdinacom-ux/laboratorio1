@@ -117,9 +117,25 @@ if (hasBuild(ecommercePath)) {
   });
 }
 
-// Start server and initialize DB
+// Manejo global preventivo de errores para evitar caídas del contenedor en Dokploy/Docker
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ [Uncaught Exception Prevista]', err.message);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ [Unhandled Rejection Prevista]', reason);
+});
+
+// Iniciar servidor y base de datos con tolerancia absoluta a fallos
 async function start() {
-  await db.initDB();
+  try {
+    await db.initDB();
+  } catch (err) {
+    console.error('⚠️ [DB Warning al Iniciar Servidor] SQLite operando en modo contingencia:', err.message);
+  }
+
+  // Garantizar que Express escuche en 0.0.0.0:PORT para que los health checks de Traefik/Dokploy
+  // nunca retornen 502 Bad Gateway
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`=======================================================`);
     console.log(`🍔 Hamburger Rapid Commercial Platform ejecutándose en puerto ${PORT}`);

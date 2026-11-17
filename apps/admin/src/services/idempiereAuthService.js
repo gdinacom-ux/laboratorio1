@@ -354,9 +354,11 @@ export async function completeLoginStep2(credentials, selectedContext, connectio
     })
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.success) {
-    throw new Error(data.error || 'Error al completar el Paso 2 en iDempiere ERP');
+    const error = new Error(data.error || 'Error al completar el Paso 2 en iDempiere ERP');
+    error.details = data;
+    throw error;
   }
 
   return data.data;

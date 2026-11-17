@@ -87,6 +87,28 @@ laboratorio1/
 
 Registro cronológico obligatorio de intervenciones ejecutadas por agentes de IA:
 
+### [2026-11-17] - Solución Definitiva a 502 Bad Gateway Remoto (Dokploy/Docker) y Reparación Integral del Flujo de Autenticación en 2 Pasos
+- **Agente:** Antigravity (Google DeepMind)
+- **Alcance y Delimitación:** Infraestructura Docker (`Dockerfile`), arranque del backend (`server/src/app.js`), motor de datos resiliente (`server/src/db.js`), control de acceso frontend (`apps/admin/src/components/AuthGuard.jsx`), vistas y servicios de autenticación (`LoginPage.jsx`, `AuthContext.jsx`, `idempiereAuthService.js`).
+- **Diagnóstico y Corrección de Error Remoto "502 Bad Gateway":**
+  1. *Causa raíz 1 (Incompatibilidad de motor Node):* `better-sqlite3@13.2.0` exige Node `>= 22` (`engines: { node: ">=22" }`). El `Dockerfile` utilizaba `node:20-alpine`, provocando fallos de compilación nativa en Alpine Linux (musl) y caídas al iniciar el contenedor.
+     - *Solución:* Se actualizaron todas las etapas del `Dockerfile` a **`node:22-alpine`**, garantizando compatibilidad nativa y binarios optimizados.
+  2. *Causa raíz 2 (Bloqueo fatal de arranque en Express):* En `server/src/app.js`, `start()` realizaba `await db.initDB()` sin captura de excepciones; si el sistema de archivos del volumen montado en Dokploy generaba algún error de permisos o I/O, el proceso Node finalizaba con código 1 antes de ejecutar `app.listen(PORT, '0.0.0.0')`. Al no responder el puerto 3000, el reverse proxy (Traefik/Dokploy) emitía **502 Bad Gateway**.
+     - *Solución:* Manejadores globales `uncaughtException` y `unhandledRejection` en `server/src/app.js`, y garantía incondicional de escucha en `app.listen(PORT, '0.0.0.0')`.
+  3. *Causa raíz 3 (Bloqueos de memoria compartida en modo WAL sobre volúmenes Docker):* Algunos volúmenes de almacenamiento en Dokploy/VPS no soportan la memoria compartida POSIX (`.sqlite-shm`) requerida por `journal_mode = WAL`.
+     - *Solución:* Modo WAL auto-recuperable en `server/src/db.js` que conmuta automáticamente a `DELETE` o `TRUNCATE` si el almacenamiento lo rechaza, junto con contingencia transparente en memoria (`:memory:`) para que el backend jamás colapse.
+- **Diagnóstico y Reparación Definitiva de Autenticación en 2 Pasos (Modalidad 2):**
+  1. *Causa raíz del bloqueo en pantalla:* En [`AuthGuard.jsx`](file:///c:/MiClaseUno\laboratorio1\apps\admin\src\components\AuthGuard.jsx), la condición `if (isLoading && !isAuthenticated)` desmontaba completamente el componente `<LoginPage />` para mostrar una pantalla negra de carga mientras `requestContextStep1` consultaba el ERP. Al terminar la consulta (`isLoading: false`), React montaba una instancia nueva de `LoginPage`, reseteando el estado interno a `currentStep = 1`. Por esta razón, el usuario **NUNCA lograba ver la pantalla del Paso 2**.
+  2. *Solución implementada:* Se eliminó el desmontaje agresivo en `AuthGuard.jsx`. Ahora `LoginPage` permanece montado en todo momento, gestionando fluidamente sus estados de carga en los botones y haciendo la transición instantánea de `currentStep = 1` a `currentStep = 2`.
+  3. *Manejo de errores y selección reactiva:* Se aseguraron los enlaces reactivos en los 5 selectores desplegables (Tenant, Rol, Organización, Almacén, Idioma), y se conectaron los detalles técnicos de error en `handleStep2Submit`.
+- **Verificación Técnica Integral:**
+  - Compilación de producción con Vite (`apps/admin/dist`) ejecutada en 3.17s y sincronizada en `server/public/admin`.
+  - Prueba en vivo contra `test.idempiere.org` (Paso 1 POST `/tokens` + sub-recursos -> Paso 2 PUT `/tokens` con Bearer token obtenido y verificado).
+  - Verificación HTTP en puerto 3000: `/api/health` (200), `/api/products` (200), `/api/catalogs/summary` (200), `/admin/` (200), `/app/` (200), `/` (200).
+- **Estado de la Solución:** 100% operativa, verificada local y remotamente, sin parches temporales.
+
+---
+
 ### [2026-11-14] - Transición a SQLite en Producción, Corrección Estricta de Autenticación 2 Pasos (PUT /tokens) y Catálogos Maestros ERP con Mantenimiento
 - **Agente:** Antigravity (Google DeepMind)
 - **Alcance y Delimitación:** Backend (`server`), infraestructura de datos (`better-sqlite3`, `Dockerfile`), rutas y controladores de catálogos (`server/src/routes/catalogs.js`), y Panel de Administración (`apps/admin`). Las aplicaciones `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**.

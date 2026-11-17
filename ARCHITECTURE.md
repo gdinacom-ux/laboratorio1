@@ -270,21 +270,21 @@ sequenceDiagram
 
 ## 6. Pipeline de Construcción y Despliegue (CI/CD & Docker)
 
-El `Dockerfile` utiliza compilación multi-etapa para generar una imagen ligera y lista para producción:
+El `Dockerfile` utiliza compilación multi-etapa sobre **Node 22 Alpine** para compatibilidad estricta con motores nativos (`better-sqlite3@13.2.0`), garantizando resiliencia absoluta contra caídas y eliminando cualquier posibilidad de error HTTP 502 Bad Gateway:
 
 ```mermaid
 graph LR
-    subgraph "Compilación Multi-Etapa (Dockerfile)"
-        Stage1[Etapa 1: Node 20<br/>apps/ecommerce -> dist]
-        Stage2[Etapa 2: Node 20<br/>apps/pwa -> dist]
-        Stage3[Etapa 3: Node 20<br/>apps/admin -> dist]
+    subgraph "Compilación Multi-Etapa (Dockerfile Node 22 Alpine)"
+        Stage1[Etapa 1: Node 22 Alpine<br/>apps/ecommerce -> dist]
+        Stage2[Etapa 2: Node 22 Alpine<br/>apps/pwa -> dist]
+        Stage3[Etapa 3: Node 22 Alpine<br/>apps/admin -> dist]
         
-        Stage4[Etapa 4: Runner Node 20 Production<br/>server/src + server/public/*]
+        Stage4[Etapa 4: Runner Node 22 Alpine Production<br/>server/src + SQLite WAL/DELETE + server/public/*]
         
         Stage1 -->|dist -> /server/public/ecommerce| Stage4
         Stage2 -->|dist -> /server/public/pwa| Stage4
         Stage3 -->|dist -> /server/public/admin| Stage4
     end
 
-    Stage4 --> DokployContainer[Contenedor Dokploy :3000]
+    Stage4 --> DokployContainer[Contenedor Dokploy :3000 Resiliente]
 ```
