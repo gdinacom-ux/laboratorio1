@@ -8,6 +8,7 @@ import {
   loadSession,
   clearSession
 } from '../services/idempiereAuthService';
+import { AuthService } from '../services/authService';
 
 const AuthContext = createContext(null);
 
@@ -20,6 +21,7 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [isTokenModalOpen, setIsTokenModalOpen] = useState(false);
 
   // Modalidad de autenticación seleccionada: 'direct' (1 Paso) | 'assisted' (2 Pasos)
   const [loginMode, setLoginMode] = useState('direct');
@@ -37,8 +39,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (auth && auth.token) {
       saveSession(auth);
+      AuthService.saveSession(auth);
     } else {
       clearSession();
+      AuthService.logout();
     }
   }, [auth]);
 
@@ -47,40 +51,49 @@ export function AuthProvider({ children }) {
    */
   const buildNormalizedSession = (authData, credentials, connMode) => {
     const params = authData.parameters || credentials.parameters || {};
+    const normOrgId = Number(params.organizationId ?? params.orgId ?? 11);
+    const normClientId = Number(params.clientId ?? 11);
+    const normRoleId = Number(params.roleId ?? 102);
+    const normWarehouseId = Number(params.warehouseId ?? 103);
+    const normLanguage = params.language || 'es_PE';
+
     return {
       token: authData.token,
       tokenType: authData.tokenType || 'Bearer',
       userId: authData.userId || 100,
-      userName: authData.userName || credentials.userName,
+      userName: authData.userName || credentials.userName || 'admin @ gardenworld.com',
+      password: credentials.password || authData.password || 'GardenAdmin',
       // Contexto canónico exigido por el negocio
-      clientId: Number(params.clientId ?? 11),
-      roleId: Number(params.roleId ?? 102),
-      organizationId: Number(params.organizationId ?? params.orgId ?? 11),
-      orgId: Number(params.organizationId ?? params.orgId ?? 11), // Compatibilidad
-      warehouseId: Number(params.warehouseId ?? 103),
-      language: params.language || 'en_US',
+      clientId: normClientId,
+      roleId: normRoleId,
+      organizationId: normOrgId,
+      orgId: normOrgId, // Compatibilidad
+      warehouseId: normWarehouseId,
+      language: normLanguage,
       // Metadatos descriptivos
       clientName: authData.client?.name || 'GardenWorld, Inc.',
-      roleName: authData.role?.name || (params.roleId === 102 ? 'GardenAdmin' : `Rol #${params.roleId}`),
-      orgName: authData.organization?.name || `HQ Org #${params.organizationId || 11}`,
-      warehouseName: authData.warehouse?.name || `Almacén #${params.warehouseId || 103}`,
+      roleName: authData.role?.name || (normRoleId === 102 ? 'GardenAdmin' : `Rol #${normRoleId}`),
+      orgName: authData.organization?.name || `HQ Org #${normOrgId}`,
+      warehouseName: authData.warehouse?.name || `Almacén #${normWarehouseId}`,
       simulated: Boolean(authData.simulated),
       simulatedReason: authData.simulatedReason,
       erpBaseUrl: credentials.erpBaseUrl || erpBaseUrl,
+      baseUrl: credentials.erpBaseUrl || erpBaseUrl, // Compatibilidad
       connectionMode: connMode,
       parameters: {
-        clientId: Number(params.clientId ?? 11),
-        roleId: Number(params.roleId ?? 102),
-        organizationId: Number(params.organizationId ?? params.orgId ?? 11),
-        warehouseId: Number(params.warehouseId ?? 103),
-        language: params.language || 'en_US'
+        clientId: normClientId,
+        roleId: normRoleId,
+        organizationId: normOrgId,
+        warehouseId: normWarehouseId,
+        language: normLanguage
       },
       audit: authData.audit || {
         endpointCalled: '/api/v1/auth/tokens',
         connectionMode: connMode,
         timestamp: new Date().toISOString()
       },
-      loginTime: new Date().toISOString()
+      loginTime: new Date().toISOString(),
+      loginAt: new Date().toISOString()
     };
   };
 
@@ -97,7 +110,7 @@ export function AuthProvider({ children }) {
       const session = buildNormalizedSession(authData, credentials, activeMode);
       setAuth(session);
       setIsLoading(false);
-      return { success: true, session };
+      return { success: true, session, ...session };
     } catch (err) {
       setIsLoading(false);
       const message = err.message || 'Error al autenticar con iDempiere ERP';
@@ -117,7 +130,7 @@ export function AuthProvider({ children }) {
     try {
       const result = await serviceRequestContextStep1(credentials, activeMode);
       setIsLoading(false);
-      return { success: true, authenticated: false, contextData: result };
+      return { success: true, authenticated: false, contextData: result, ...result };
     } catch (err) {
       setIsLoading(false);
       const message = err.message || 'Error al consultar contexto multitenant';
@@ -143,7 +156,7 @@ export function AuthProvider({ children }) {
       );
       setAuth(session);
       setIsLoading(false);
-      return { success: true, session };
+      return { success: true, session, ...session };
     } catch (err) {
       setIsLoading(false);
       const message = err.message || 'Error al completar inicio de sesión en iDempiere';
@@ -159,26 +172,38 @@ export function AuthProvider({ children }) {
     setAuth(null);
     setAuthError(null);
     clearSession();
+    AuthService.logout();
   };
 
   const value = {
     auth,
+    session: auth, // Alias para componentes de RapidFood
     isAuthenticated: Boolean(auth?.token),
     isLoading,
+    loading: isLoading, // Alias
     authError,
     setAuthError,
+    clearError: () => setAuthError(null),
     loginMode,
     setLoginMode,
     connectionMode,
     setConnectionMode,
+    proxyMode: connectionMode === 'direct' ? 'none' : 'local',
+    setProxyMode: (mode) => setConnectionMode(mode === 'none' ? 'direct' : 'proxy'),
+    baseUrl: erpBaseUrl,
+    setBaseUrl: setErpBaseUrl,
     erpBaseUrl,
     setErpBaseUrl,
     loginDirect,
     requestContextStep1,
+    loginStep1: requestContextStep1, // Alias
     completeLoginStep2,
+    loginStep2: completeLoginStep2, // Alias
     logout,
     isInspectorOpen,
     setIsInspectorOpen,
+    isTokenModalOpen,
+    setIsTokenModalOpen,
     defaultParams: DEFAULT_GARDENWORLD_PARAMS
   };
 

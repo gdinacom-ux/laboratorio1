@@ -5,6 +5,7 @@ import LoginPage from './LoginPage';
 /**
  * 🛡️ AuthGuard.jsx
  * Control de Acceso Frontend para el Panel de Administración
+ * Replicado fielmente de laboratorio1
  * 
  * Regla de Negocio:
  * - Si no existe un token válido en sesión, renderiza la pantalla de Login manteniendo su estado.
@@ -20,4 +21,3 @@ export default function AuthGuard({ children }) {
 
   return <>{children}</>;
 }
-

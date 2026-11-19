@@ -1,407 +1,245 @@
 /**
- * 🗄️ Motor de Base de Datos SQLite para Producción (Hamburger Rapid Platform)
- * Reemplaza MySQL garantizando portabilidad, cero latencia y persistencia completa
- * con soporte para Catálogos Maestros sincronizados desde iDempiere ERP REST API v1.
+ * 🗄️ Motor de Base de Datos SQLite para Producción (RapidFood / Hamburger Rapid Platform)
+ * Provee persistencia completa, soporte multi-tenant y sincronización bidireccional
+ * para los 6 Catálogos Maestros de iDempiere ERP REST API v1:
+ * 1. Categorías de Productos (M_Product_Category)
+ * 2. Catálogo de Productos (M_Product)
+ * 3. Listas y Precios (M_PriceList, M_PriceList_Version, M_ProductPrice)
+ * 4. Categorías de Clientes (C_BP_Group)
+ * 5. Clientes / Socios de Negocio (C_BPartner)
+ * 6. Catálogo de Impuestos (C_Tax) [Solo Lectura]
+ * + Historial de Sincronizaciones (sync_logs)
+ * + Consumidores & Métricas (consumers)
+ * + Pedidos 3 Capas (orders: PWA Preventa vs E-commerce)
  */
 
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-// Ruta del archivo SQLite en producción / desarrollo
-const dataDir = path.resolve(__dirname, '../data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const dbPath = process.env.SQLITE_DB_PATH || path.join(dataDir, 'hamburger_rapid.sqlite');
 let db = null;
 let lastDbError = null;
 
-// --- DATOS INICIALES: 10 VARIANTES GOURMET ---
-const INITIAL_PRODUCTS = [
-  {
-    id: 101,
-    name: 'Rey de las Burgers',
-    category: 'Especialidades',
-    specialty_badge: '👑 Especialidad Suprema',
-    specialty_level: 'Leyenda',
-    price: 14.99,
-    stock: 45,
-    rating: 5.0,
-    reviews: 480,
-    calories: '860 kcal',
-    prep_time: '12 min',
-    image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600&auto=format&fit=crop&q=80',
-    description: 'Carne 100% Angus flameada a la leña de roble, queso cheddar inglés añejado 18 meses, cebolla caramelizada al bourbon y panceta crocante en pan brioche artesanal dorado.'
-  },
-  {
-    id: 102,
-    name: 'Burger Real Clásica',
-    category: 'Clásicas',
-    specialty_badge: '⭐ Clásica de la Casa',
-    specialty_level: 'Clásica',
-    price: 9.99,
-    stock: 60,
-    rating: 4.8,
-    reviews: 350,
-    calories: '650 kcal',
-    prep_time: '8 min',
-    image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=600&auto=format&fit=crop&q=80',
-    description: 'Medallón jugoso Angus a la parrilla de carbón viva, doble queso americano Monterey Jack fundido, rodajas de tomate maduro, lechuga romana y aderezo especial de la casa.'
-  },
-  {
-    id: 103,
-    name: 'Burger Real Doble',
-    category: 'Doble Parrilla',
-    specialty_badge: '🔥 Doble Angus',
-    specialty_level: 'Doble',
-    price: 13.50,
-    stock: 50,
-    rating: 4.9,
-    reviews: 410,
-    calories: '920 kcal',
-    prep_time: '11 min',
-    image: 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=600&auto=format&fit=crop&q=80',
-    description: 'Dos medallones de carne Angus sellados al fuego vivo, cuádruple queso cheddar fundido, doble tocino ahumado crocante y salsa barbacoa ahumada artesanal.'
-  },
-  {
-    id: 104,
-    name: 'Burger Doble Especial',
-    category: 'Especialidades',
-    specialty_badge: '💎 Gran Reserva Especial',
-    specialty_level: 'Especial',
-    price: 15.20,
-    stock: 35,
-    rating: 5.0,
-    reviews: 290,
-    calories: '980 kcal',
-    prep_time: '14 min',
-    image: 'https://images.unsplash.com/photo-1583032015879-6638421877bd?w=600&auto=format&fit=crop&q=80',
-    description: 'Doble medallón Angus con costra caramelizada, queso provolone ahumado derretido, champiñones silvestres salteados al tomillo, mayonesa de trufa negra y rúcula fresca.'
-  },
-  {
-    id: 105,
-    name: 'Burger Bacon Truffle Delux',
-    category: 'Gourmet Deluxe',
-    specialty_badge: '✨ Toque Trufado',
-    specialty_level: 'Deluxe',
-    price: 13.90,
-    stock: 40,
-    rating: 4.9,
-    reviews: 320,
-    calories: '810 kcal',
-    prep_time: '10 min',
-    image: 'https://images.unsplash.com/photo-1594212699903-ec8a3eca50f5?w=600&auto=format&fit=crop&q=80',
-    description: 'Medallón Angus con panceta curada extra crujiente, queso gouda fundido, cebolla crispy dorada y emulsión casera de trufa blanca.'
-  },
-  {
-    id: 106,
-    name: 'Smash Burger Cuádruple Melt',
-    category: 'Smash Lovers',
-    specialty_badge: '🧀 Extra Queso Melt',
-    specialty_level: 'Smash',
-    price: 16.50,
-    stock: 30,
-    rating: 4.8,
-    reviews: 260,
-    calories: '1050 kcal',
-    prep_time: '10 min',
-    image: 'https://images.unsplash.com/photo-1553979459-d2229ba7433b?w=600&auto=format&fit=crop&q=80',
-    description: 'Cuatro láminas ultrafinas de carne smash caramelizadas con cebolla brunoise, bañadas en generoso queso cheddar derretido estilo lava y salsa secreta.'
-  },
-  {
-    id: 107,
-    name: 'Crispy Chicken Royal Ranch',
-    category: 'Pollo Crispy',
-    specialty_badge: '🍗 Pollo Crujiente Imperial',
-    specialty_level: 'Crispy',
-    price: 11.80,
-    stock: 45,
-    rating: 4.9,
-    reviews: 380,
-    calories: '720 kcal',
-    prep_time: '9 min',
-    image: 'https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?w=600&auto=format&fit=crop&q=80',
-    description: 'Pechuga de pollo de granja marinada en suero de leche 24h con rebozado crujiente de 11 especias, ensalada coleslaw fresca y aderezo ranch al cilantro.'
-  },
-  {
-    id: 108,
-    name: 'Smoky BBQ Texas Brisket Burger',
-    category: 'Ahumada BBQ',
-    specialty_badge: '🪵 Barbacoa Ahumada',
-    specialty_level: 'Ahumada',
-    price: 14.50,
-    stock: 25,
-    rating: 5.0,
-    reviews: 195,
-    calories: '940 kcal',
-    prep_time: '12 min',
-    image: 'https://images.unsplash.com/photo-1572802419224-296b0aeee0d9?w=600&auto=format&fit=crop&q=80',
-    description: 'Carne Angus coronada con auténtico brisket de res ahumado 12 horas en madera de roble, aros de cebolla a la cerveza y salsa BBQ dulce con toque ahumado.'
-  },
-  {
-    id: 109,
-    name: 'Avocado Guacamole Prime',
-    category: 'Gourmet Fresca',
-    specialty_badge: '🥑 Fresca & Prime',
-    specialty_level: 'Gourmet',
-    price: 12.50,
-    stock: 35,
-    rating: 4.7,
-    reviews: 215,
-    calories: '690 kcal',
-    prep_time: '8 min',
-    image: 'https://images.unsplash.com/photo-1520072959219-c595dc870360?w=600&auto=format&fit=crop&q=80',
-    description: 'Hamburguesa Angus con abundante guacamole rústico recién hecho, jalapeños encurtidos en casa, tomate asado y queso gouda derretido.'
-  },
-  {
-    id: 110,
-    name: 'Veggie Portobello Supreme',
-    category: 'Plant-Based',
-    specialty_badge: '🌱 Opción Gourmet Veggie',
-    specialty_level: 'Veggie',
-    price: 11.20,
-    stock: 30,
-    rating: 4.8,
-    reviews: 180,
-    calories: '540 kcal',
-    prep_time: '7 min',
-    image: 'https://images.unsplash.com/photo-1525059696034-4967a8e1dca2?w=600&auto=format&fit=crop&q=80',
-    description: 'Sombrero de hongo Portobello entero marinado en reducción balsámica y asado al fuego, queso de cabra fundido, espinacas baby y pesto de albahaca fresca.'
+// Directorio y ruta persistente para SQLite en producción
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../data');
+const DB_FILE = process.env.SQLITE_FILE || 'hamburger_rapid.sqlite';
+const dbPath = process.env.SQLITE_DB_PATH || path.join(DATA_DIR, DB_FILE);
+
+function ensureDbDirectory() {
+  const targetDir = path.dirname(dbPath);
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+  } catch (err) {
+    console.warn('[DB SQLite] Advertencia creando directorio de datos:', err.message);
   }
-];
+}
 
-// --- DATOS INICIALES: CATEGORÍAS DE PRODUCTOS (M_Product_Category) ---
-const INITIAL_PRODUCT_CATEGORIES = [
-  { id: 1, idempiere_id: 109, value: 'BURGER_ESP', name: 'Especialidades', description: 'Hamburguesas insignia y recetas exclusivas gourmet', is_active: 1 },
-  { id: 2, idempiere_id: 110, value: 'BURGER_CLAS', name: 'Clásicas', description: 'Hamburguesas tradicionales con queso americano y vegetales', is_active: 1 },
-  { id: 3, idempiere_id: 111, value: 'BURGER_DOBL', name: 'Doble Parrilla', description: 'Doble medallón sellado a fuego vivo para gran apetito', is_active: 1 },
-  { id: 4, idempiere_id: 112, value: 'BURGER_DELUX', name: 'Gourmet Deluxe', description: 'Ingredientes de lujo, trufa, proscuitto y quesos curados', is_active: 1 },
-  { id: 5, idempiere_id: 113, value: 'BURGER_SMASH', name: 'Smash Lovers', description: 'Técnica smash con costra caramelizada y queso lava', is_active: 1 },
-  { id: 6, idempiere_id: 114, value: 'CHICKEN_CRISP', name: 'Pollo Crispy', description: 'Pechuga marinada crujiente con salsas de la casa', is_active: 1 },
-  { id: 7, idempiere_id: 115, value: 'PLANT_BASED', name: 'Plant-Based', description: 'Opciones vegetarianas y hongos portobello marinado', is_active: 1 }
-];
-
-// --- DATOS INICIALES: LISTAS DE PRECIOS Y VERSIONES (M_PriceList / M_PriceList_Version) ---
-const INITIAL_PRICE_LISTS = [
-  { id: 1, idempiere_id: 101, name: 'Venta Mostrador y PWA (USD)', description: 'Lista oficial para compras en local y preventa móvil', currency_code: 'USD', is_so_pricelist: 1, is_default: 1, is_active: 1 },
-  { id: 2, idempiere_id: 102, name: 'E-commerce Web Directo (USD)', description: 'Precios especiales y combos para pedidos online', currency_code: 'USD', is_so_pricelist: 1, is_default: 0, is_active: 1 },
-  { id: 3, idempiere_id: 103, name: 'Franquicias y Corporativo Mayorista', description: 'Precios para sucursales franquiciadas e institucionales', currency_code: 'USD', is_so_pricelist: 1, is_default: 0, is_active: 1 }
-];
-
-const INITIAL_PRICE_LIST_VERSIONS = [
-  { id: 1, idempiere_id: 101, price_list_id: 1, name: 'Tarifa General 2026', valid_from: '2026-01-01', is_active: 1 },
-  { id: 2, idempiere_id: 102, price_list_id: 2, name: 'Tarifa Web Promo Verano', valid_from: '2026-06-01', is_active: 1 },
-  { id: 3, idempiere_id: 103, price_list_id: 3, name: 'Tarifa Corporativa 2026-Q1', valid_from: '2026-01-01', is_active: 1 }
-];
-
-// --- DATOS INICIALES: CATEGORÍAS DE CLIENTES (C_BP_Group) ---
-const INITIAL_CUSTOMER_CATEGORIES = [
-  { id: 1, idempiere_id: 101, value: 'CLIENTE_FINAL', name: 'Consumidor Final (B2C)', description: 'Compradores en tienda física, app móvil o portal web', is_default: 1, is_active: 1 },
-  { id: 2, idempiere_id: 102, value: 'CLIENTE_VIP', name: 'Clientes VIP Gold Club', description: 'Clientes frecuentes con acumulación de puntos y beneficios', is_default: 0, is_active: 1 },
-  { id: 3, idempiere_id: 103, value: 'EMPRESARIAL', name: 'Clientes Corporativos / Oficinas', description: 'Empresas con pedidos masivos y facturación electrónica', is_default: 0, is_active: 1 },
-  { id: 4, idempiere_id: 104, value: 'FRANQUICIA', name: 'Operadores de Franquicia', description: 'Puntos de venta autorizados Hamburger Rapid', is_default: 0, is_active: 1 }
-];
-
-// --- DATOS INICIALES: IMPUESTOS (C_Tax) - SOLO LECTURA ---
-const INITIAL_TAXES = [
-  { id: 1, idempiere_id: 101, name: 'IVA General Alimentos (16%)', description: 'Impuesto al valor agregado estándar en alimentos y bebidas', rate: 16.0, tax_indicator: 'IVA-16', is_active: 1, valid_from: '2020-01-01' },
-  { id: 2, idempiere_id: 102, name: 'Impoconsumo Restaurantes (8%)', description: 'Impuesto nacional al consumo en servicio a la mesa y delivery', rate: 8.0, tax_indicator: 'INC-8', is_active: 1, valid_from: '2020-01-01' },
-  { id: 3, idempiere_id: 103, name: 'Exento de Impuestos (0%)', description: 'Ventas exentas para diplomáticos y donaciones benéficas', rate: 0.0, tax_indicator: 'EXENTO', is_active: 1, valid_from: '2020-01-01' },
-  { id: 4, idempiere_id: 104, name: 'Tasa Reducida Panadería (5%)', description: 'Tarifa preferencial para insumos y pan artesanal', rate: 5.0, tax_indicator: 'IVA-5', is_active: 1, valid_from: '2020-01-01' }
-];
-
-// --- CONSUMIDORES INICIALES ---
-const INITIAL_CONSUMERS = [
-  { id: 'C-01', name: 'Valentina Morales', email: 'valentina.m@example.com', tier: 'VIP', segment: 'Alto Consumo (Frecuente Semanal)', orders_count: 24, total_spent: 382.40, favorite_burger: 'Rey de las Burgers', last_order: 'Hace 2 horas', loyalty_points: 2450, satisfaction: '5/5 ★' },
-  { id: 'C-02', name: 'Sebastián Restrepo', email: 's.restrepo@example.com', tier: 'VIP', segment: 'Alto Consumo (Gourmet Fan)', orders_count: 19, total_spent: 298.50, favorite_burger: 'Burger Doble Especial', last_order: 'Ayer, 20:30', loyalty_points: 1980, satisfaction: '5/5 ★' },
-  { id: 'C-03', name: 'Camila Delgado', email: 'camila.delgado@example.com', tier: 'Medio', segment: 'Consumo Regular (Fin de Semana)', orders_count: 9, total_spent: 128.70, favorite_burger: 'Burger Real Doble', last_order: 'Hace 3 días', loyalty_points: 890, satisfaction: '4.8/5 ★' },
-  { id: 'C-04', name: 'Andrés Felipe Gómez', email: 'andres.gomez@example.com', tier: 'Medio', segment: 'Consumo Regular (Oficina Lunch)', orders_count: 7, total_spent: 98.20, favorite_burger: 'Crispy Chicken Royal Ranch', last_order: 'Hace 5 días', loyalty_points: 710, satisfaction: '4.9/5 ★' },
-  { id: 'C-05', name: 'Mariana Navarro', email: 'mariana.n@example.com', tier: 'Ocasional', segment: 'Consumidor Nuevo / Esporádico', orders_count: 2, total_spent: 27.50, favorite_burger: 'Burger Real Clásica', last_order: 'Hace 1 semana', loyalty_points: 210, satisfaction: '4.5/5 ★' },
-  { id: 'C-06', name: 'Lucía Fernández', email: 'lucia.f@example.com', tier: 'VIP', segment: 'Alto Consumo (Smash Lover)', orders_count: 16, total_spent: 254.90, favorite_burger: 'Smash Burger Cuádruple Melt', last_order: 'Hoy, 13:15', loyalty_points: 1620, satisfaction: '5/5 ★' },
-  { id: 'C-07', name: 'Diego Mendoza', email: 'diego.mendoza@example.com', tier: 'Ocasional', segment: 'Consumidor Ocasional', orders_count: 1, total_spent: 14.99, favorite_burger: 'Rey de las Burgers', last_order: 'Hace 2 semanas', loyalty_points: 110, satisfaction: '5/5 ★' }
-];
-
-// --- PEDIDOS INICIALES ---
-const INITIAL_ORDERS = [
-  {
-    id: 'ORD-9842',
-    origin: 'pwa',
-    channel: '📱 PWA Preventa Vendedores',
-    vendor: 'Carlos Méndez (Ruta Gastronómica 4)',
-    customer: 'Valentina Morales',
-    items_json: JSON.stringify([
-      { name: 'Rey de las Burgers', qty: 2, price: 14.99 },
-      { name: 'Papas Rústicas Trufadas', qty: 1, price: 4.50 }
-    ]),
-    total: 34.48,
-    status: 'En Parrilla',
-    idempiere_synced: 1,
-    idempiere_order_id: 'C_Order_100452',
-    timestamp: 'Hace 10 min',
-    address: 'Calle Mayor 45, Dpto 3B',
-    payment: 'Tarjeta Visa •••• 4821',
-    erp_context_json: JSON.stringify({ clientId: 11, organizationId: 11, warehouseId: 103, syncedBy: 'Carlos Méndez' })
-  },
-  {
-    id: 'ORD-9841',
-    origin: 'ecommerce',
-    channel: '🛒 E-commerce Web Directo',
-    vendor: 'Cliente Web Directo',
-    customer: 'Sebastián Restrepo',
-    items_json: JSON.stringify([
-      { name: 'Burger Doble Especial', qty: 1, price: 15.20 },
-      { name: 'Cerveza Artesanal IPA', qty: 2, price: 4.00 }
-    ]),
-    total: 23.20,
-    status: 'En Camino',
-    idempiere_synced: 0,
-    idempiere_order_id: null,
-    timestamp: 'Hace 22 min',
-    address: 'Av. Libertador 1200',
-    payment: 'Apple Pay',
-    erp_context_json: null
-  },
-  {
-    id: 'ORD-9840',
-    origin: 'pwa',
-    channel: '📱 PWA Preventa Vendedores',
-    vendor: 'Mariana López (Preventa Zona Norte)',
-    customer: 'Lucía Fernández',
-    items_json: JSON.stringify([
-      { name: 'Smash Burger Cuádruple Melt', qty: 1, price: 16.50 },
-      { name: 'Burger Real Clásica', qty: 1, price: 9.99 }
-    ]),
-    total: 26.49,
-    status: 'Entregado',
-    idempiere_synced: 1,
-    idempiere_order_id: 'C_Order_100449',
-    timestamp: 'Hace 1 hora',
-    address: 'Plaza del Sol 8',
-    payment: 'Efectivo contra entrega',
-    erp_context_json: JSON.stringify({ clientId: 11, organizationId: 11, warehouseId: 103, syncedBy: 'Mariana López' })
-  },
-  {
-    id: 'ORD-9839',
-    origin: 'ecommerce',
-    channel: '🛒 E-commerce Web Directo',
-    vendor: 'Cliente Web Directo',
-    customer: 'Andrés Felipe Gómez',
-    items_json: JSON.stringify([
-      { name: 'Crispy Chicken Royal Ranch', qty: 2, price: 11.80 },
-      { name: 'Milk Shake Vainilla', qty: 2, price: 4.50 }
-    ]),
-    total: 32.60,
-    status: 'Recibido',
-    idempiere_synced: 0,
-    idempiere_order_id: null,
-    timestamp: 'Hace 2 horas',
-    address: 'Calle 10 # 45-20',
-    payment: 'Transferencia PSE',
-    erp_context_json: null
+function getDatabase() {
+  if (!db) {
+    initDB();
   }
-];
+  return db;
+}
+
+function ensureDB() {
+  return getDatabase();
+}
+
+/**
+ * Inicializa la base de datos SQLite con tablas optimizadas, modo WAL resiliente y contingencia en memoria
+ */
+function initDB() {
+  if (db) return db;
+
+  ensureDbDirectory();
+
+  try {
+    console.log(`📦 [DB SQLite] Conectando a archivo de base de datos en: ${dbPath}`);
+    db = new Database(dbPath, { timeout: 7000 });
+
+    // Habilitar modo WAL o DELETE según soporte del sistema de archivos
+    try {
+      db.pragma('journal_mode = WAL');
+    } catch (walErr) {
+      console.warn('⚠️ [DB SQLite] journal_mode = WAL falló en el volumen, usando DELETE:', walErr.message);
+      try { db.pragma('journal_mode = DELETE'); } catch (_) {}
+    }
+
+    try { db.pragma('synchronous = NORMAL'); } catch (_) {}
+    try { db.pragma('foreign_keys = ON'); } catch (_) {}
+
+    createTables(db);
+    seedInitialDataIfEmpty(db);
+
+    console.log('✅ [DB SQLite] Base de datos SQLite inicializada y lista para producción.');
+    return db;
+  } catch (err) {
+    lastDbError = err.message;
+    console.error('⚠️ [DB SQLite] Error al inicializar SQLite en disco (' + err.message + '). Activando fallback en memoria (:memory:)...');
+    try {
+      db = new Database(':memory:');
+      createTables(db);
+      seedInitialDataIfEmpty(db);
+      console.log('✅ [DB SQLite Fallback] Base de datos en memoria inicializada.');
+      return db;
+    } catch (memErr) {
+      console.error('❌ [DB SQLite] Error crítico en SQLite:', memErr.message);
+      lastDbError = memErr.message;
+      return null;
+    }
+  }
+}
 
 function createTables(targetDb) {
-  // 1. Tabla de Productos (Gourmet Burgers & Sincronizados)
+  // 1. Categorías de Productos (M_Product_Category)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS product_categories (
+      id INTEGER PRIMARY KEY,
+      idempiere_id INTEGER DEFAULT NULL,
+      value TEXT,
+      name TEXT NOT NULL,
+      description TEXT,
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
+  // 2. Catálogo de Productos (M_Product)
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       idempiere_id INTEGER DEFAULT NULL,
+      value TEXT,
       name TEXT NOT NULL,
-      category TEXT NOT NULL,
-      price REAL NOT NULL,
-      stock INTEGER NOT NULL DEFAULT 0,
+      category TEXT DEFAULT 'Especialidades',
+      category_id INTEGER,
+      category_name TEXT,
+      price REAL DEFAULT 0,
+      stock INTEGER DEFAULT 50,
       specialty_badge TEXT DEFAULT '',
       specialty_level TEXT DEFAULT 'Normal',
       rating REAL DEFAULT 5.0,
       reviews INTEGER DEFAULT 100,
       calories TEXT DEFAULT '',
       prep_time TEXT DEFAULT '',
-      image TEXT DEFAULT '',
-      description TEXT DEFAULT '',
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+      image TEXT,
+      description TEXT,
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (category_id) REFERENCES product_categories(id) ON DELETE SET NULL
+    );
   `);
 
-  // 2. Tabla de Categorías de Productos (M_Product_Category)
-  targetDb.exec(`
-    CREATE TABLE IF NOT EXISTS product_categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      idempiere_id INTEGER DEFAULT NULL,
-      value TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      is_active INTEGER NOT NULL DEFAULT 1,
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // 3. Tabla de Listas de Precios (M_PriceList)
+  // 3. Listas de Precios (M_PriceList)
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS price_lists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       idempiere_id INTEGER DEFAULT NULL,
       name TEXT NOT NULL,
-      description TEXT DEFAULT '',
+      description TEXT,
+      currency TEXT DEFAULT 'USD',
       currency_code TEXT DEFAULT 'USD',
       is_so_pricelist INTEGER DEFAULT 1,
       is_default INTEGER DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
-  // 4. Tabla de Versiones de Lista de Precios (M_PriceList_Version)
+  // 4. Versiones de Listas de Precios (M_PriceList_Version)
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS price_list_versions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       idempiere_id INTEGER DEFAULT NULL,
-      price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
+      price_list_id INTEGER NOT NULL,
       name TEXT NOT NULL,
-      valid_from TEXT DEFAULT CURRENT_DATE,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+      valid_from TEXT DEFAULT (date('now')),
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (price_list_id) REFERENCES price_lists(id) ON DELETE CASCADE
+    );
   `);
 
-  // 5. Tabla de Categorías de Clientes (C_BP_Group)
+  // 5. Precios de Productos (M_ProductPrice)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS product_prices (
+      id INTEGER PRIMARY KEY,
+      price_list_version_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      product_name TEXT,
+      price_list REAL DEFAULT 0,
+      price_std REAL DEFAULT 0,
+      price_limit REAL DEFAULT 0,
+      synced_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (price_list_version_id) REFERENCES price_list_versions(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 6. Categorías de Clientes (C_BP_Group)
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS customer_categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       idempiere_id INTEGER DEFAULT NULL,
-      value TEXT NOT NULL UNIQUE,
+      value TEXT,
       name TEXT NOT NULL,
-      description TEXT DEFAULT '',
+      description TEXT,
       is_default INTEGER DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
-  // 6. Tabla de Impuestos (C_Tax) - SOLO LECTURA
+  // 7. Clientes / Socios de Negocio (C_BPartner)
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY,
+      idempiere_id INTEGER DEFAULT NULL,
+      value TEXT,
+      name TEXT NOT NULL,
+      tax_id TEXT,
+      group_id INTEGER,
+      group_name TEXT,
+      email TEXT,
+      phone TEXT,
+      is_customer INTEGER DEFAULT 1,
+      is_vendor INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (group_id) REFERENCES customer_categories(id) ON DELETE SET NULL
+    );
+  `);
+
+  // 8. Catálogo de Impuestos (C_Tax) - SOLO LECTURA
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS taxes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       idempiere_id INTEGER DEFAULT NULL,
       name TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      rate REAL NOT NULL DEFAULT 0.0,
-      tax_indicator TEXT DEFAULT '',
-      is_active INTEGER NOT NULL DEFAULT 1,
-      valid_from TEXT DEFAULT CURRENT_DATE,
-      synced_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+      description TEXT,
+      rate REAL DEFAULT 0,
+      tax_indicator TEXT,
+      valid_from TEXT DEFAULT (date('now')),
+      is_active INTEGER DEFAULT 1,
+      synced_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
-  // 7. Tabla de Consumidores
+  // 9. Historial y Auditoría de Sincronización ERP
+  targetDb.exec(`
+    CREATE TABLE IF NOT EXISTS sync_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      catalog TEXT NOT NULL,
+      count INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'SUCCESS',
+      message TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+
+  // 10. Consumidores y Segmentación
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS consumers (
       id TEXT PRIMARY KEY,
@@ -415,10 +253,10 @@ function createTables(targetDb) {
       last_order TEXT DEFAULT '',
       loyalty_points INTEGER DEFAULT 0,
       satisfaction TEXT DEFAULT '5/5 ★'
-    )
+    );
   `);
 
-  // 8. Tabla de Pedidos (PWA vs E-commerce)
+  // 11. Pedidos Unificados (PWA Preventa vs E-commerce)
   targetDb.exec(`
     CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
@@ -436,638 +274,1037 @@ function createTables(targetDb) {
       payment TEXT DEFAULT '',
       erp_context_json TEXT DEFAULT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
+    );
   `);
 }
 
-/**
- * Inicializa la base de datos SQLite con tablas optimizadas, modo WAL resiliente y contingencia en memoria
- */
-function initDB() {
-  if (db) return db;
+function seedInitialDataIfEmpty(targetDb) {
+  const countProd = targetDb.prepare('SELECT COUNT(*) as count FROM products').get().count;
+  if (countProd > 0) return;
 
-  const targetDir = path.dirname(dbPath);
-  try {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
+  console.log('[DB SQLite] Base de datos vacía. Sembrando datos iniciales...');
+
+  // Sembrar Categorías de Productos
+  const insertCat = targetDb.prepare(`
+    INSERT INTO product_categories (id, value, name, description, is_active)
+    VALUES (?, ?, ?, ?, 1)
+  `);
+  insertCat.run(109, 'Chemicals', 'Chemicals & Supplies', 'Químicos y suministros');
+  insertCat.run(111, 'Doc', 'Documentation', 'Manuales y documentación');
+  insertCat.run(1001, 'Burgers', 'Hamburguesas de Autor', 'Especialidades culinarias gourmet');
+  insertCat.run(1002, 'Drinks', 'Bebidas & Refrescos', 'Bebidas frías y calientes');
+
+  // Sembrar Productos: 10 Hamburguesas Gourmet
+  const insertProd = targetDb.prepare(`
+    INSERT INTO products (id, value, name, category, category_id, category_name, price, stock, specialty_badge, specialty_level, rating, reviews, calories, prep_time, image, description, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+
+  const initialProds = [
+    {
+      id: 1,
+      value: 'BURGER-CHEF',
+      name: 'Rey de las Burgers',
+      category: 'Especialidades',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 14.99,
+      stock: 45,
+      specialty_badge: '👑 Especialidad Suprema',
+      specialty_level: 'Leyenda',
+      rating: 5.0,
+      reviews: 480,
+      calories: '860 kcal',
+      prep_time: '12 min',
+      image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80',
+      description: 'Carne 100% Angus flameada a la leña de roble, queso cheddar inglés añejado 18 meses, cebolla caramelizada al bourbon y panceta crocante en pan brioche artesanal dorado.'
+    },
+    {
+      id: 2,
+      value: 'BURGER-REAL',
+      name: 'Burger Real Clásica',
+      category: 'Clásicas',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 9.99,
+      stock: 60,
+      specialty_badge: '⭐ Clásica de la Casa',
+      specialty_level: 'Clásica',
+      rating: 4.8,
+      reviews: 350,
+      calories: '650 kcal',
+      prep_time: '8 min',
+      image: 'https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=600&q=80',
+      description: 'Medallón jugoso Angus a la parrilla de carbón viva, doble queso americano fundido, rodajas de tomate maduro, lechuga romana y aderezo especial de la casa.'
+    },
+    {
+      id: 3,
+      value: 'BURGER-DOBLE',
+      name: 'Burger Real Doble',
+      category: 'Doble Parrilla',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 12.50,
+      stock: 50,
+      specialty_badge: '🔥 Doble Angus',
+      specialty_level: 'Doble',
+      rating: 4.9,
+      reviews: 410,
+      calories: '920 kcal',
+      prep_time: '11 min',
+      image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?auto=format&fit=crop&w=600&q=80',
+      description: 'Dos carnes smash con costra caramelizada profunda, cuádruple queso americano derretido, panceta crujiente, relish dulce y mayonesa trufada.'
+    },
+    {
+      id: 4,
+      value: 'BURGER-ESPECIAL',
+      name: 'Burger Doble Especial',
+      category: 'Especialidades',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 13.50,
+      stock: 35,
+      specialty_badge: '💎 Gran Reserva Especial',
+      specialty_level: 'Especial',
+      rating: 5.0,
+      reviews: 290,
+      calories: '980 kcal',
+      prep_time: '14 min',
+      image: 'https://images.unsplash.com/photo-1583032015879-c5c48b59d9c5?auto=format&fit=crop&w=600&q=80',
+      description: 'Doble blend premium de picaña y asado de tira, queso Monterrey Jack fundido con pimientos asados, huevo de campo a la plancha y alioli de ajo negro.'
+    },
+    {
+      id: 5,
+      value: 'BURGER-TRUFA',
+      name: 'Burger Trufa & Portobello',
+      category: 'Gourmet Deluxe',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 15.50,
+      stock: 25,
+      specialty_badge: '✨ Toque Trufado',
+      specialty_level: 'Deluxe',
+      rating: 4.9,
+      reviews: 320,
+      calories: '810 kcal',
+      prep_time: '10 min',
+      image: 'https://images.unsplash.com/photo-1565299585323-38d6b0865b47?auto=format&fit=crop&w=600&q=80',
+      description: 'Carne madurada Dry-Aged 30 días, sombrero de hongo Portobello glaseado al vino tinto, queso suizo Emmental gratinado y aceite de trufa blanca de Piamonte.'
+    },
+    {
+      id: 6,
+      value: 'BURGER-CRISPY',
+      name: 'Burger Crispy Smokehouse',
+      category: 'Pollo Crujiente',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 11.99,
+      stock: 50,
+      specialty_badge: '🍗 Pollo Crispy',
+      specialty_level: 'Especial',
+      rating: 4.8,
+      reviews: 215,
+      calories: '740 kcal',
+      prep_time: '9 min',
+      image: 'https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?auto=format&fit=crop&w=600&q=80',
+      description: 'Suprema de pechuga campera marinada en buttermilk y pimentón ahumado, rebozada en copos de maíz crocantes, doble bacon y salsa BBQ chipotle.'
+    },
+    {
+      id: 7,
+      value: 'BURGER-BBQ',
+      name: 'Burger BBQ Bourbon Flame',
+      category: 'Especialidades',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 13.99,
+      stock: 30,
+      specialty_badge: '🥃 Salsa Bourbon',
+      specialty_level: 'Reserva',
+      rating: 4.9,
+      reviews: 380,
+      calories: '890 kcal',
+      prep_time: '12 min',
+      image: 'https://images.unsplash.com/photo-1594212699903-ec8a3eca50f5?auto=format&fit=crop&w=600&q=80',
+      description: 'Medallón de res ahumado con virutas de roble, aros de cebolla rebozados a la cerveza, pulled pork y salsa barbacoa al bourbon artesanal.'
+    },
+    {
+      id: 8,
+      value: 'BURGER-BACON',
+      name: 'Burger Bacon Cheese Deluxe',
+      category: 'Clásicas',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 10.99,
+      stock: 45,
+      specialty_badge: '🥓 Extra Bacon',
+      specialty_level: 'Clásica',
+      rating: 4.8,
+      reviews: 310,
+      calories: '790 kcal',
+      prep_time: '8 min',
+      image: 'https://images.unsplash.com/photo-1553979459-d2229ba7433b?auto=format&fit=crop&w=600&q=80',
+      description: '180g de carne jugosa a la parrilla, triple tira de tocino ahumado de corte grueso, quesos gouda y monterrey fundidos y mostaza dulce.'
+    },
+    {
+      id: 9,
+      value: 'BURGER-GUACA',
+      name: 'Burger Guacamole & Chipotle',
+      category: 'Gourmet',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 12.99,
+      stock: 28,
+      specialty_badge: '🥑 Guacamole Fresco',
+      specialty_level: 'Gourmet',
+      rating: 4.7,
+      reviews: 195,
+      calories: '720 kcal',
+      prep_time: '9 min',
+      image: 'https://images.unsplash.com/photo-1596662951482-0c4ba74a6df6?auto=format&fit=crop&w=600&q=80',
+      description: 'Carne a la parrilla sobre cama de guacamole rústico con toque de lima fresca, totopos crocantes de maíz, queso pepper jack y crema ligera de chipotle.'
+    },
+    {
+      id: 10,
+      value: 'BURGER-GREEN',
+      name: 'Burger Green Garden Truffle',
+      category: 'Veggie',
+      category_id: 1001,
+      category_name: 'Hamburguesas de Autor',
+      price: 11.50,
+      stock: 32,
+      specialty_badge: '🌱 100% Veggie',
+      specialty_level: 'Veggie',
+      rating: 4.8,
+      reviews: 160,
+      calories: '580 kcal',
+      prep_time: '10 min',
+      image: 'https://images.unsplash.com/photo-1520072959219-c595dc870360?auto=format&fit=crop&w=600&q=80',
+      description: 'Medallón artesanal a base de lentejas francesas, quinoa andina y setas salteadas, queso vegetal cremoso ahumado, brotes tiernos y mahonesa vegana trufada.'
+    },
+    {
+      id: 136,
+      value: 'Fertilizer#50',
+      name: 'Fertilizer #50 (iDempiere Seed)',
+      category: 'Chemicals & Supplies',
+      category_id: 109,
+      category_name: 'Chemicals & Supplies',
+      price: 24.50,
+      stock: 80,
+      specialty_badge: '🌾 ERP Seed',
+      specialty_level: 'Insumo',
+      rating: 5.0,
+      reviews: 10,
+      calories: 'N/A',
+      prep_time: '0 min',
+      image: 'https://images.unsplash.com/photo-1585314062340-f1a5a7c9328d?w=500&auto=format&fit=crop&q=80',
+      description: '50 # Bag of Lawn Fertilizer sincronizado desde GardenWorld.'
     }
-  } catch (dirErr) {
-    console.warn('⚠️ [DB SQLite] No se pudo crear directorio para SQLite, usando fallback:', dirErr.message);
+  ];
+
+  for (const p of initialProds) {
+    insertProd.run(
+      p.id, p.value, p.name, p.category, p.category_id, p.category_name,
+      p.price, p.stock, p.specialty_badge, p.specialty_level,
+      p.rating, p.reviews, p.calories, p.prep_time, p.image, p.description
+    );
   }
 
-  try {
-    console.log(`📦 [DB SQLite] Conectando a archivo de base de datos en: ${dbPath}`);
-    db = new Database(dbPath, { timeout: 7000 });
+  // Sembrar Listas de Precios y Versiones
+  targetDb.prepare(`
+    INSERT INTO price_lists (id, name, description, currency, currency_code, is_active)
+    VALUES (101, 'Standard Sales', 'Lista de precios de venta estándar', 'USD', 'USD', 1)
+  `).run();
 
-    // Habilitar modo WAL o DELETE según soporte del sistema de archivos (ej: Docker volumes/NFS)
-    try {
-      db.pragma('journal_mode = WAL');
-    } catch (walErr) {
-      console.warn('⚠️ [DB SQLite] journal_mode = WAL falló en el volumen, usando DELETE:', walErr.message);
-      try { db.pragma('journal_mode = DELETE'); } catch (_) {}
-    }
+  targetDb.prepare(`
+    INSERT INTO price_list_versions (id, price_list_id, name, valid_from, is_active)
+    VALUES (101, 101, 'Standard 2026', '2026-01-01', 1)
+  `).run();
 
-    try { db.pragma('synchronous = NORMAL'); } catch (_) {}
-    try { db.pragma('foreign_keys = ON'); } catch (_) {}
+  // Sembrar Precios de Productos
+  const insertPrice = targetDb.prepare(`
+    INSERT INTO product_prices (id, price_list_version_id, product_id, product_name, price_list, price_std, price_limit)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertPrice.run(1001, 101, 1, 'Rey de las Burgers', 16.00, 14.99, 13.50);
+  insertPrice.run(1002, 101, 2, 'Burger Real Clásica', 12.00, 9.99, 8.50);
+  insertPrice.run(1003, 101, 3, 'Burger Real Doble', 14.00, 12.50, 11.00);
+  insertPrice.run(1004, 101, 4, 'Burger Doble Especial', 15.00, 13.50, 12.00);
+  insertPrice.run(1005, 101, 136, 'Fertilizer #50', 28.00, 24.50, 22.00);
 
-    createTables(db);
-    seedInitialData();
+  // Sembrar Categorías de Clientes
+  targetDb.prepare(`
+    INSERT INTO customer_categories (id, value, name, description, is_active)
+    VALUES (103, 'Standard', 'Clientes Estándar', 'Clientes minoristas corporativos', 1)
+  `).run();
+  targetDb.prepare(`
+    INSERT INTO customer_categories (id, value, name, description, is_active)
+    VALUES (104, 'Vendors', 'Proveedores & Aliados', 'Proveedores de suministros gastronómicos', 1)
+  `).run();
 
-    console.log('✅ [DB SQLite] Base de datos persistente inicializada y lista para producción.');
-    return db;
-  } catch (err) {
-    lastDbError = err.message;
-    console.error('⚠️ [DB SQLite] Error al inicializar SQLite en disco (' + err.message + '). Activando fallback en memoria (:memory:)...');
-    try {
-      db = new Database(':memory:');
-      createTables(db);
-      seedInitialData();
-      console.log('✅ [DB SQLite Fallback] Base de datos en memoria inicializada.');
-      return db;
-    } catch (memErr) {
-      console.error('❌ [DB SQLite] Error crítico en SQLite:', memErr.message);
-      lastDbError = memErr.message;
-      return null;
-    }
-  }
+  // Sembrar Clientes
+  const insertCust = targetDb.prepare(`
+    INSERT INTO customers (id, value, name, tax_id, group_id, group_name, email, phone, is_customer, is_vendor, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+  `);
+  insertCust.run(120, 'SeedFarm', 'Seed Farm Inc.', 'TAX-10293847', 103, 'Clientes Estándar', 'contact@seedfarm.com', '+1-555-0192', 1, 1);
+  insertCust.run(121, 'GardenRetail', 'Garden World Retail Store', 'TAX-99887766', 103, 'Clientes Estándar', 'store@gardenworld.com', '+1-555-0144', 1, 0);
+
+  // Sembrar Impuestos (Solo Lectura)
+  const insertTax = targetDb.prepare(`
+    INSERT INTO taxes (id, name, description, rate, tax_indicator, is_active)
+    VALUES (?, ?, ?, ?, ?, 1)
+  `);
+  insertTax.run(106, 'GST / General Sales Tax', 'Impuesto General a las Ventas', 18.0, 'GST');
+  insertTax.run(107, 'Standard Tax', 'Impuesto Estándar Reducido', 10.0, 'STD');
+  insertTax.run(108, 'Exempt', 'Exonerado de Impuestos', 0.0, 'EX');
+
+  // Sembrar Consumidores
+  const insertConsumer = targetDb.prepare(`
+    INSERT INTO consumers (id, name, email, tier, segment, orders_count, total_spent, favorite_burger, last_order, loyalty_points, satisfaction)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  insertConsumer.run('CUST-001', 'Valentina Morales', 'valentina@empresa.com', 'VIP', 'VIP Gold', 24, 480.50, 'Rey de las Burgers', 'Hace 10 min', 480, '5/5 ★');
+  insertConsumer.run('CUST-002', 'Sebastián Restrepo', 'sebastian@startup.io', 'Medio', 'Regular', 8, 145.20, 'Burger Real Doble', 'Hace 22 min', 145, '4.9/5 ★');
+  insertConsumer.run('CUST-003', 'Lucía Fernández', 'lucia@diseno.com', 'VIP', 'VIP Gold', 18, 360.00, 'Smash Burger Cuádruple Melt', 'Hace 1 hora', 360, '5/5 ★');
+  insertConsumer.run('CUST-004', 'Andrés Felipe Gómez', 'andres@agencia.pe', 'Ocasional', 'Nuevo', 2, 42.60, 'Crispy Chicken Royal Ranch', 'Hace 2 horas', 42, '4.8/5 ★');
+
+  // Sembrar Pedidos de Ejemplo
+  const insertOrder = targetDb.prepare(`
+    INSERT INTO orders (id, origin, channel, vendor, customer, items_json, total, status, idempiere_synced, idempiere_order_id, timestamp, address, payment, erp_context_json)
+    VALUES (@id, @origin, @channel, @vendor, @customer, @items_json, @total, @status, @idempiere_synced, @idempiere_order_id, @timestamp, @address, @payment, @erp_context_json)
+  `);
+  insertOrder.run({
+    id: 'ORD-9842',
+    origin: 'pwa',
+    channel: '📱 PWA Preventa Vendedores',
+    vendor: 'Carlos Méndez (Ruta Gastronómica 4)',
+    customer: 'Valentina Morales',
+    items_json: JSON.stringify([
+      { name: 'Rey de las Burgers', qty: 2, price: 14.99 },
+      { name: 'Papas Rústicas Trufadas', qty: 1, price: 4.50 }
+    ]),
+    total: 34.48,
+    status: 'En Parrilla',
+    idempiere_synced: 1,
+    idempiere_order_id: 'C_Order_100452',
+    timestamp: 'Hace 10 min',
+    address: 'Calle Mayor 45, Dpto 3B',
+    payment: 'Tarjeta Visa •••• 4821',
+    erp_context_json: JSON.stringify({ clientId: 11, organizationId: 11, warehouseId: 103, syncedBy: 'Carlos Méndez' })
+  });
+  insertOrder.run({
+    id: 'ORD-9841',
+    origin: 'ecommerce',
+    channel: '🛒 E-commerce Web Directo',
+    vendor: 'Cliente Web Directo',
+    customer: 'Sebastián Restrepo',
+    items_json: JSON.stringify([
+      { name: 'Burger Doble Especial', qty: 1, price: 13.50 },
+      { name: 'Bebida Artesanal 500ml', qty: 2, price: 3.50 }
+    ]),
+    total: 20.50,
+    status: 'En Camino',
+    idempiere_synced: 0,
+    idempiere_order_id: null,
+    timestamp: 'Hace 22 min',
+    address: 'Av. Libertador 1200',
+    payment: 'Apple Pay',
+    erp_context_json: null
+  });
+
+  targetDb.prepare(`
+    INSERT INTO sync_logs (catalog, count, status, message)
+    VALUES ('SEED_INIT', 25, 'SUCCESS', 'Sembrado inicial de catálogos maestros y pedidos completado.')
+  `).run();
+
+  console.log('[DB SQLite] Sembrado inicial completado con éxito.');
 }
 
-function seedInitialData() {
-  // Productos
-  const countProd = db.prepare('SELECT COUNT(*) as count FROM products').get().count;
-  if (countProd === 0) {
-    const insert = db.prepare(`
-      INSERT INTO products (id, name, category, price, stock, specialty_badge, specialty_level, rating, reviews, calories, prep_time, image, description)
-      VALUES (@id, @name, @category, @price, @stock, @specialty_badge, @specialty_level, @rating, @reviews, @calories, @prep_time, @image, @description)
-    `);
-    const insertMany = db.transaction((prods) => {
-      for (const p of prods) insert.run(p);
-    });
-    insertMany(INITIAL_PRODUCTS);
-  }
-
-  // Categorías de Productos
-  const countCat = db.prepare('SELECT COUNT(*) as count FROM product_categories').get().count;
-  if (countCat === 0) {
-    const insert = db.prepare(`
-      INSERT INTO product_categories (id, idempiere_id, value, name, description, is_active)
-      VALUES (@id, @idempiere_id, @value, @name, @description, @is_active)
-    `);
-    const insertMany = db.transaction((cats) => {
-      for (const c of cats) insert.run(c);
-    });
-    insertMany(INITIAL_PRODUCT_CATEGORIES);
-  }
-
-  // Listas de Precios
-  const countPL = db.prepare('SELECT COUNT(*) as count FROM price_lists').get().count;
-  if (countPL === 0) {
-    const insert = db.prepare(`
-      INSERT INTO price_lists (id, idempiere_id, name, description, currency_code, is_so_pricelist, is_default, is_active)
-      VALUES (@id, @idempiere_id, @name, @description, @currency_code, @is_so_pricelist, @is_default, @is_active)
-    `);
-    const insertMany = db.transaction((pls) => {
-      for (const p of pls) insert.run(p);
-    });
-    insertMany(INITIAL_PRICE_LISTS);
-  }
-
-  // Versiones de Lista de Precios
-  const countPLV = db.prepare('SELECT COUNT(*) as count FROM price_list_versions').get().count;
-  if (countPLV === 0) {
-    const insert = db.prepare(`
-      INSERT INTO price_list_versions (id, idempiere_id, price_list_id, name, valid_from, is_active)
-      VALUES (@id, @idempiere_id, @price_list_id, @name, @valid_from, @is_active)
-    `);
-    const insertMany = db.transaction((versions) => {
-      for (const v of versions) insert.run(v);
-    });
-    insertMany(INITIAL_PRICE_LIST_VERSIONS);
-  }
-
-  // Categorías de Clientes
-  const countCC = db.prepare('SELECT COUNT(*) as count FROM customer_categories').get().count;
-  if (countCC === 0) {
-    const insert = db.prepare(`
-      INSERT INTO customer_categories (id, idempiere_id, value, name, description, is_default, is_active)
-      VALUES (@id, @idempiere_id, @value, @name, @description, @is_default, @is_active)
-    `);
-    const insertMany = db.transaction((ccs) => {
-      for (const c of ccs) insert.run(c);
-    });
-    insertMany(INITIAL_CUSTOMER_CATEGORIES);
-  }
-
-  // Impuestos
-  const countTaxes = db.prepare('SELECT COUNT(*) as count FROM taxes').get().count;
-  if (countTaxes === 0) {
-    const insert = db.prepare(`
-      INSERT INTO taxes (id, idempiere_id, name, description, rate, tax_indicator, is_active, valid_from)
-      VALUES (@id, @idempiere_id, @name, @description, @rate, @tax_indicator, @is_active, @valid_from)
-    `);
-    const insertMany = db.transaction((txs) => {
-      for (const t of txs) insert.run(t);
-    });
-    insertMany(INITIAL_TAXES);
-  }
-
-  // Consumidores
-  const countConsumers = db.prepare('SELECT COUNT(*) as count FROM consumers').get().count;
-  if (countConsumers === 0) {
-    const insert = db.prepare(`
-      INSERT INTO consumers (id, name, email, tier, segment, orders_count, total_spent, favorite_burger, last_order, loyalty_points, satisfaction)
-      VALUES (@id, @name, @email, @tier, @segment, @orders_count, @total_spent, @favorite_burger, @last_order, @loyalty_points, @satisfaction)
-    `);
-    const insertMany = db.transaction((cs) => {
-      for (const c of cs) insert.run(c);
-    });
-    insertMany(INITIAL_CONSUMERS);
-  }
-
-  // Pedidos
-  const countOrders = db.prepare('SELECT COUNT(*) as count FROM orders').get().count;
-  if (countOrders === 0) {
-    const insert = db.prepare(`
-      INSERT INTO orders (id, origin, channel, vendor, customer, items_json, total, status, idempiere_synced, idempiere_order_id, timestamp, address, payment, erp_context_json)
-      VALUES (@id, @origin, @channel, @vendor, @customer, @items_json, @total, @status, @idempiere_synced, @idempiere_order_id, @timestamp, @address, @payment, @erp_context_json)
-    `);
-    const insertMany = db.transaction((os) => {
-      for (const o of os) insert.run(o);
-    });
-    insertMany(INITIAL_ORDERS);
-  }
-}
-
-function ensureDB() {
-  if (!db) {
-    initDB();
-  }
-  return db;
-}
-
-// =====================================================================
-// OPERACIONES CRUD: PRODUCTOS (HAMBURGER RAPID)
-// =====================================================================
-
+// ==========================================
+// 1. PRODUCTOS
+// ==========================================
 function getProducts() {
-  ensureDB();
-  return db.prepare('SELECT * FROM products ORDER BY id ASC').all();
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM products ORDER BY id ASC').all();
 }
 
 function getProductById(id) {
-  ensureDB();
-  return db.prepare('SELECT * FROM products WHERE id = ?').get(Number(id));
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM products WHERE id = ?').get(Number(id));
 }
 
-function addProduct({ name, category, price, stock, image, description, specialty_badge, specialty_level, idempiere_id }) {
-  ensureDB();
-  const cleanPrice = parseFloat(price) || 0;
-  const cleanStock = parseInt(stock, 10) || 0;
-  const cleanBadge = specialty_badge || '✨ Especial';
-  const cleanLevel = specialty_level || 'Gourmet';
-
-  const stmt = db.prepare(`
-    INSERT INTO products (name, category, price, stock, image, description, specialty_badge, specialty_level, rating, reviews, calories, prep_time, idempiere_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5.0, 1, '750 kcal', '10 min', ?)
+function addProduct(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  const stmt = d.prepare(`
+    INSERT INTO products (id, value, name, category, category_id, category_name, price, stock, specialty_badge, specialty_level, image, description, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-
-  const info = stmt.run(name, category || 'Especialidades', cleanPrice, cleanStock, image || '', description || '', cleanBadge, cleanLevel, idempiere_id || null);
-  return getProductById(info.lastInsertRowid);
+  stmt.run(
+    id,
+    data.value || `PROD-${id}`,
+    data.name,
+    data.category || 'Especialidades',
+    data.category_id || null,
+    data.category_name || null,
+    parseFloat(data.price) || 0,
+    parseInt(data.stock, 10) || 50,
+    data.specialty_badge || '✨ Especial',
+    data.specialty_level || 'Gourmet',
+    data.image || 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80',
+    data.description || '',
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1
+  );
+  return getProductById(id);
 }
 
-function updateProduct(id, fields = {}) {
-  ensureDB();
+function updateProduct(id, data) {
+  const d = getDatabase();
   const existing = getProductById(id);
   if (!existing) return null;
 
-  const name = fields.name ?? existing.name;
-  const category = fields.category ?? existing.category;
-  const price = fields.price !== undefined ? parseFloat(fields.price) : existing.price;
-  const stock = fields.stock !== undefined ? parseInt(fields.stock, 10) : existing.stock;
-  const specialty_badge = fields.specialty_badge ?? existing.specialty_badge;
-  const specialty_level = fields.specialty_level ?? existing.specialty_level;
-  const image = fields.image ?? existing.image;
-  const description = fields.description ?? existing.description;
-  const idempiere_id = fields.idempiere_id ?? existing.idempiere_id;
-
-  db.prepare(`
-    UPDATE products
-    SET name = ?, category = ?, price = ?, stock = ?, specialty_badge = ?, specialty_level = ?, image = ?, description = ?, idempiere_id = ?
+  const stmt = d.prepare(`
+    UPDATE products SET
+      value = ?,
+      name = ?,
+      category = ?,
+      category_id = ?,
+      category_name = ?,
+      price = ?,
+      stock = ?,
+      specialty_badge = ?,
+      specialty_level = ?,
+      image = ?,
+      description = ?,
+      is_active = ?,
+      synced_at = datetime('now')
     WHERE id = ?
-  `).run(name, category, price, stock, specialty_badge, specialty_level, image, description, idempiere_id, Number(id));
-
+  `);
+  stmt.run(
+    data.value !== undefined ? data.value : existing.value,
+    data.name !== undefined ? data.name : existing.name,
+    data.category !== undefined ? data.category : existing.category,
+    data.category_id !== undefined ? data.category_id : existing.category_id,
+    data.category_name !== undefined ? data.category_name : existing.category_name,
+    data.price !== undefined ? parseFloat(data.price) : existing.price,
+    data.stock !== undefined ? parseInt(data.stock, 10) : existing.stock,
+    data.specialty_badge !== undefined ? data.specialty_badge : existing.specialty_badge,
+    data.specialty_level !== undefined ? data.specialty_level : existing.specialty_level,
+    data.image !== undefined ? data.image : existing.image,
+    data.description !== undefined ? data.description : existing.description,
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : existing.is_active,
+    Number(id)
+  );
   return getProductById(id);
 }
 
 function deleteProduct(id) {
-  ensureDB();
-  const info = db.prepare('DELETE FROM products WHERE id = ?').run(Number(id));
-  return info.changes > 0;
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM products WHERE id = ?').run(Number(id));
+  return res.changes > 0;
 }
 
 function resetProducts() {
-  ensureDB();
-  db.exec('DELETE FROM products');
-  const insert = db.prepare(`
-    INSERT INTO products (id, name, category, price, stock, specialty_badge, specialty_level, rating, reviews, calories, prep_time, image, description)
-    VALUES (@id, @name, @category, @price, @stock, @specialty_badge, @specialty_level, @rating, @reviews, @calories, @prep_time, @image, @description)
-  `);
-  const insertMany = db.transaction((prods) => {
-    for (const p of prods) insert.run(p);
-  });
-  insertMany(INITIAL_PRODUCTS);
+  const d = getDatabase();
+  d.prepare('DELETE FROM products').run();
+  seedInitialDataIfEmpty(d);
+  return true;
 }
 
-// =====================================================================
-// OPERACIONES CRUD: CATEGORÍAS DE PRODUCTOS (M_Product_Category)
-// =====================================================================
-
+// ==========================================
+// 2. CATEGORÍAS DE PRODUCTOS
+// ==========================================
 function getProductCategories() {
-  ensureDB();
-  return db.prepare('SELECT * FROM product_categories ORDER BY id ASC').all();
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM product_categories ORDER BY id DESC').all();
 }
 
 function getProductCategoryById(id) {
-  ensureDB();
-  return db.prepare('SELECT * FROM product_categories WHERE id = ?').get(Number(id));
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM product_categories WHERE id = ?').get(Number(id));
 }
 
-function addProductCategory({ value, name, description, is_active = 1, idempiere_id = null }) {
-  ensureDB();
-  const stmt = db.prepare(`
-    INSERT INTO product_categories (value, name, description, is_active, idempiere_id)
+function addProductCategory(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  const stmt = d.prepare(`
+    INSERT INTO product_categories (id, value, name, description, is_active)
     VALUES (?, ?, ?, ?, ?)
   `);
-  const info = stmt.run(value.trim(), name.trim(), description || '', is_active ? 1 : 0, idempiere_id);
-  return getProductCategoryById(info.lastInsertRowid);
+  stmt.run(
+    id,
+    data.value || `CAT-${id}`,
+    data.name,
+    data.description || '',
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1
+  );
+  return getProductCategoryById(id);
 }
 
-function updateProductCategory(id, { value, name, description, is_active, idempiere_id }) {
-  ensureDB();
+function updateProductCategory(id, data) {
+  const d = getDatabase();
   const existing = getProductCategoryById(id);
   if (!existing) return null;
 
-  db.prepare(`
-    UPDATE product_categories
-    SET value = ?, name = ?, description = ?, is_active = ?, idempiere_id = ?
+  const stmt = d.prepare(`
+    UPDATE product_categories SET
+      value = ?,
+      name = ?,
+      description = ?,
+      is_active = ?,
+      synced_at = datetime('now')
     WHERE id = ?
-  `).run(
-    value !== undefined ? value.trim() : existing.value,
-    name !== undefined ? name.trim() : existing.name,
-    description !== undefined ? description : existing.description,
-    is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
-    idempiere_id !== undefined ? idempiere_id : existing.idempiere_id,
+  `);
+  stmt.run(
+    data.value !== undefined ? data.value : existing.value,
+    data.name !== undefined ? data.name : existing.name,
+    data.description !== undefined ? data.description : existing.description,
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : existing.is_active,
     Number(id)
   );
-
   return getProductCategoryById(id);
 }
 
 function deleteProductCategory(id) {
-  ensureDB();
-  const info = db.prepare('DELETE FROM product_categories WHERE id = ?').run(Number(id));
-  return info.changes > 0;
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM product_categories WHERE id = ?').run(Number(id));
+  return res.changes > 0;
 }
 
-// =====================================================================
-// OPERACIONES CRUD: LISTAS DE PRECIOS Y VERSIONES (M_PriceList)
-// =====================================================================
-
+// ==========================================
+// 3. LISTAS DE PRECIOS, VERSIONES Y PRECIOS
+// ==========================================
 function getPriceLists() {
-  ensureDB();
-  const lists = db.prepare('SELECT * FROM price_lists ORDER BY id ASC').all();
-  const versions = db.prepare('SELECT * FROM price_list_versions ORDER BY valid_from DESC').all();
-
-  return lists.map(list => ({
-    ...list,
-    versions: versions.filter(v => v.price_list_id === list.id)
-  }));
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM price_lists ORDER BY id DESC').all();
 }
 
 function getPriceListById(id) {
-  ensureDB();
-  const list = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(Number(id));
-  if (!list) return null;
-  const versions = db.prepare('SELECT * FROM price_list_versions WHERE price_list_id = ? ORDER BY valid_from DESC').all(Number(id));
-  return { ...list, versions };
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM price_lists WHERE id = ?').get(Number(id));
 }
 
-function addPriceList({ name, description, currency_code = 'USD', is_so_pricelist = 1, is_default = 0, is_active = 1, idempiere_id = null }) {
-  ensureDB();
-  const stmt = db.prepare(`
-    INSERT INTO price_lists (name, description, currency_code, is_so_pricelist, is_default, is_active, idempiere_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(name.trim(), description || '', currency_code || 'USD', is_so_pricelist ? 1 : 0, is_default ? 1 : 0, is_active ? 1 : 0, idempiere_id);
-  return getPriceListById(info.lastInsertRowid);
+function addPriceList(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  d.prepare(`
+    INSERT INTO price_lists (id, name, description, currency, currency_code, is_active)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, data.name, data.description || '', data.currency || 'USD', data.currency_code || 'USD', data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1);
+  return getPriceListById(id);
 }
 
-function updatePriceList(id, fields = {}) {
-  ensureDB();
-  const existing = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(Number(id));
-  if (!existing) return null;
-
-  db.prepare(`
-    UPDATE price_lists
-    SET name = ?, description = ?, currency_code = ?, is_so_pricelist = ?, is_default = ?, is_active = ?, idempiere_id = ?
+function updatePriceList(id, data) {
+  const d = getDatabase();
+  d.prepare(`
+    UPDATE price_lists SET
+      name = COALESCE(?, name),
+      description = COALESCE(?, description),
+      currency = COALESCE(?, currency),
+      currency_code = COALESCE(?, currency_code),
+      is_active = COALESCE(?, is_active),
+      synced_at = datetime('now')
     WHERE id = ?
-  `).run(
-    fields.name !== undefined ? fields.name.trim() : existing.name,
-    fields.description !== undefined ? fields.description : existing.description,
-    fields.currency_code !== undefined ? fields.currency_code : existing.currency_code,
-    fields.is_so_pricelist !== undefined ? (fields.is_so_pricelist ? 1 : 0) : existing.is_so_pricelist,
-    fields.is_default !== undefined ? (fields.is_default ? 1 : 0) : existing.is_default,
-    fields.is_active !== undefined ? (fields.is_active ? 1 : 0) : existing.is_active,
-    fields.idempiere_id !== undefined ? fields.idempiere_id : existing.idempiere_id,
-    Number(id)
-  );
-
+  `).run(data.name, data.description, data.currency, data.currency_code, data.is_active !== undefined ? (data.is_active ? 1 : 0) : undefined, Number(id));
   return getPriceListById(id);
 }
 
 function deletePriceList(id) {
-  ensureDB();
-  const info = db.prepare('DELETE FROM price_lists WHERE id = ?').run(Number(id));
-  return info.changes > 0;
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM price_lists WHERE id = ?').run(Number(id));
+  return res.changes > 0;
 }
 
-// Versiones de Lista de Precios
-function addPriceListVersion({ price_list_id, name, valid_from, is_active = 1, idempiere_id = null }) {
-  ensureDB();
-  const stmt = db.prepare(`
-    INSERT INTO price_list_versions (price_list_id, name, valid_from, is_active, idempiere_id)
+function getPriceListVersions(priceListId = null) {
+  const d = getDatabase();
+  if (priceListId) {
+    return d.prepare('SELECT * FROM price_list_versions WHERE price_list_id = ? ORDER BY id DESC').all(Number(priceListId));
+  }
+  return d.prepare('SELECT * FROM price_list_versions ORDER BY id DESC').all();
+}
+
+function addPriceListVersion(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  d.prepare(`
+    INSERT INTO price_list_versions (id, price_list_id, name, valid_from, is_active)
     VALUES (?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(Number(price_list_id), name.trim(), valid_from || new Date().toISOString().split('T')[0], is_active ? 1 : 0, idempiere_id);
-  return db.prepare('SELECT * FROM price_list_versions WHERE id = ?').get(info.lastInsertRowid);
+  `).run(id, Number(data.price_list_id), data.name, data.valid_from || new Date().toISOString().split('T')[0], data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1);
+  return d.prepare('SELECT * FROM price_list_versions WHERE id = ?').get(id);
 }
 
 function deletePriceListVersion(id) {
-  ensureDB();
-  const info = db.prepare('DELETE FROM price_list_versions WHERE id = ?').run(Number(id));
-  return info.changes > 0;
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM price_list_versions WHERE id = ?').run(Number(id));
+  return res.changes > 0;
 }
 
-// =====================================================================
-// OPERACIONES CRUD: CATEGORÍAS DE CLIENTES (C_BP_Group)
-// =====================================================================
+function getProductPrices(versionId = null) {
+  const d = getDatabase();
+  if (versionId) {
+    return d.prepare('SELECT * FROM product_prices WHERE price_list_version_id = ? ORDER BY id DESC').all(Number(versionId));
+  }
+  return d.prepare('SELECT * FROM product_prices ORDER BY id DESC').all();
+}
 
+function addProductPrice(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  d.prepare(`
+    INSERT INTO product_prices (id, price_list_version_id, product_id, product_name, price_list, price_std, price_limit)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    Number(data.price_list_version_id),
+    Number(data.product_id),
+    data.product_name || '',
+    parseFloat(data.price_list) || 0,
+    parseFloat(data.price_std) || 0,
+    parseFloat(data.price_limit) || 0
+  );
+  return d.prepare('SELECT * FROM product_prices WHERE id = ?').get(id);
+}
+
+function updateProductPrice(id, data) {
+  const d = getDatabase();
+  d.prepare(`
+    UPDATE product_prices SET
+      price_list = COALESCE(?, price_list),
+      price_std = COALESCE(?, price_std),
+      price_limit = COALESCE(?, price_limit),
+      synced_at = datetime('now')
+    WHERE id = ?
+  `).run(data.price_list, data.price_std, data.price_limit, Number(id));
+  return d.prepare('SELECT * FROM product_prices WHERE id = ?').get(Number(id));
+}
+
+function deleteProductPrice(id) {
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM product_prices WHERE id = ?').run(Number(id));
+  return res.changes > 0;
+}
+
+// ==========================================
+// 4. CATEGORÍAS DE CLIENTES (C_BP_Group)
+// ==========================================
 function getCustomerCategories() {
-  ensureDB();
-  return db.prepare('SELECT * FROM customer_categories ORDER BY id ASC').all();
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM customer_categories ORDER BY id DESC').all();
 }
 
 function getCustomerCategoryById(id) {
-  ensureDB();
-  return db.prepare('SELECT * FROM customer_categories WHERE id = ?').get(Number(id));
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM customer_categories WHERE id = ?').get(Number(id));
 }
 
-function addCustomerCategory({ value, name, description, is_default = 0, is_active = 1, idempiere_id = null }) {
-  ensureDB();
-  const stmt = db.prepare(`
-    INSERT INTO customer_categories (value, name, description, is_default, is_active, idempiere_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(value.trim(), name.trim(), description || '', is_default ? 1 : 0, is_active ? 1 : 0, idempiere_id);
-  return getCustomerCategoryById(info.lastInsertRowid);
+function addCustomerCategory(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  d.prepare(`
+    INSERT INTO customer_categories (id, value, name, description, is_active)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, data.value || `GRP-${id}`, data.name, data.description || '', data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1);
+  return getCustomerCategoryById(id);
 }
 
-function updateCustomerCategory(id, fields = {}) {
-  ensureDB();
-  const existing = getCustomerCategoryById(id);
-  if (!existing) return null;
-
-  db.prepare(`
-    UPDATE customer_categories
-    SET value = ?, name = ?, description = ?, is_default = ?, is_active = ?, idempiere_id = ?
+function updateCustomerCategory(id, data) {
+  const d = getDatabase();
+  d.prepare(`
+    UPDATE customer_categories SET
+      value = COALESCE(?, value),
+      name = COALESCE(?, name),
+      description = COALESCE(?, description),
+      is_active = COALESCE(?, is_active),
+      synced_at = datetime('now')
     WHERE id = ?
-  `).run(
-    fields.value !== undefined ? fields.value.trim() : existing.value,
-    fields.name !== undefined ? fields.name.trim() : existing.name,
-    fields.description !== undefined ? fields.description : existing.description,
-    fields.is_default !== undefined ? (fields.is_default ? 1 : 0) : existing.is_default,
-    fields.is_active !== undefined ? (fields.is_active ? 1 : 0) : existing.is_active,
-    fields.idempiere_id !== undefined ? fields.idempiere_id : existing.idempiere_id,
-    Number(id)
-  );
-
+  `).run(data.value, data.name, data.description, data.is_active !== undefined ? (data.is_active ? 1 : 0) : undefined, Number(id));
   return getCustomerCategoryById(id);
 }
 
 function deleteCustomerCategory(id) {
-  ensureDB();
-  const info = db.prepare('DELETE FROM customer_categories WHERE id = ?').run(Number(id));
-  return info.changes > 0;
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM customer_categories WHERE id = ?').run(Number(id));
+  return res.changes > 0;
 }
 
-// =====================================================================
-// CATÁLOGO DE IMPUESTOS (C_Tax) - SOLO LECTURA
-// =====================================================================
+// ==========================================
+// 5. CLIENTES / SOCIOS DE NEGOCIO (C_BPartner)
+// ==========================================
+function getCustomers() {
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM customers ORDER BY id DESC').all();
+}
 
+function getCustomerById(id) {
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM customers WHERE id = ?').get(Number(id));
+}
+
+function addCustomer(data) {
+  const d = getDatabase();
+  const id = data.id || Date.now();
+  d.prepare(`
+    INSERT INTO customers (id, value, name, tax_id, group_id, group_name, email, phone, is_customer, is_vendor, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.value || `CUST-${id}`,
+    data.name,
+    data.tax_id || '',
+    data.group_id ? Number(data.group_id) : null,
+    data.group_name || '',
+    data.email || '',
+    data.phone || '',
+    data.is_customer !== undefined ? (data.is_customer ? 1 : 0) : 1,
+    data.is_vendor !== undefined ? (data.is_vendor ? 1 : 0) : 0,
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : 1
+  );
+  return getCustomerById(id);
+}
+
+function updateCustomer(id, data) {
+  const d = getDatabase();
+  d.prepare(`
+    UPDATE customers SET
+      value = COALESCE(?, value),
+      name = COALESCE(?, name),
+      tax_id = COALESCE(?, tax_id),
+      group_id = COALESCE(?, group_id),
+      group_name = COALESCE(?, group_name),
+      email = COALESCE(?, email),
+      phone = COALESCE(?, phone),
+      is_customer = COALESCE(?, is_customer),
+      is_vendor = COALESCE(?, is_vendor),
+      is_active = COALESCE(?, is_active),
+      synced_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    data.value,
+    data.name,
+    data.tax_id,
+    data.group_id ? Number(data.group_id) : undefined,
+    data.group_name,
+    data.email,
+    data.phone,
+    data.is_customer !== undefined ? (data.is_customer ? 1 : 0) : undefined,
+    data.is_vendor !== undefined ? (data.is_vendor ? 1 : 0) : undefined,
+    data.is_active !== undefined ? (data.is_active ? 1 : 0) : undefined,
+    Number(id)
+  );
+  return getCustomerById(id);
+}
+
+function deleteCustomer(id) {
+  const d = getDatabase();
+  const res = d.prepare('DELETE FROM customers WHERE id = ?').run(Number(id));
+  return res.changes > 0;
+}
+
+// ==========================================
+// 6. IMPUESTOS (C_Tax) - SOLO LECTURA
+// ==========================================
 function getTaxes() {
-  ensureDB();
-  return db.prepare('SELECT * FROM taxes ORDER BY rate DESC').all();
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM taxes ORDER BY rate ASC').all();
 }
 
-// =====================================================================
-// SINCRONIZACIÓN DESDE iDempiere ERP HACIA SQLITE
-// =====================================================================
+// ==========================================
+// 7. SINCRONIZACIÓN BULK DESDE IDEMPIERE ERP
+// ==========================================
+function syncCatalogFromERP(catalogName, records) {
+  const d = getDatabase();
+  const timestamp = new Date().toISOString();
+  let count = 0;
 
-function syncProductCategoriesFromERP(records = []) {
-  ensureDB();
-  const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO product_categories (idempiere_id, value, name, description, is_active, synced_at)
-    VALUES (@idempiere_id, @value, @name, @description, @is_active, @synced_at)
-    ON CONFLICT(value) DO UPDATE SET
-      idempiere_id = excluded.idempiere_id,
-      name = excluded.name,
-      description = excluded.description,
-      is_active = excluded.is_active,
-      synced_at = excluded.synced_at
-  `);
-
-  const runSync = db.transaction((recs) => {
-    let count = 0;
-    for (const r of recs) {
-      upsert.run({
-        idempiere_id: r.id || r.M_Product_Category_ID,
-        value: r.Value || `CAT_${r.id}`,
-        name: r.Name || 'Sin Nombre',
-        description: r.Description || '',
-        is_active: r.IsActive !== false ? 1 : 0,
-        synced_at: now
-      });
-      count++;
-    }
-    return count;
-  });
-
-  return runSync(records);
-}
-
-function syncProductsFromERP(records = []) {
-  ensureDB();
-  const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO products (idempiere_id, name, category, price, stock, description, synced_at)
-    VALUES (@idempiere_id, @name, @category, @price, @stock, @description, @synced_at)
-  `);
-
-  const runSync = db.transaction((recs) => {
-    let count = 0;
-    for (const r of recs) {
-      // Verificar si ya existe por idempiere_id
-      const existing = db.prepare('SELECT id FROM products WHERE idempiere_id = ?').get(r.id);
-      if (existing) {
-        db.prepare(`
-          UPDATE products
-          SET name = ?, description = ?, synced_at = ?
-          WHERE id = ?
-        `).run(r.Name, r.Description || '', now, existing.id);
-      } else {
-        upsert.run({
-          idempiere_id: r.id || r.M_Product_ID,
-          name: r.Name || 'Producto ERP',
-          category: r.M_Product_Category_ID?.identifier || 'ERP iDempiere',
-          price: 10.0,
-          stock: 50,
-          description: r.Description || 'Sincronizado desde M_Product iDempiere',
-          synced_at: now
-        });
-      }
-      count++;
-    }
-    return count;
-  });
-
-  return runSync(records);
-}
-
-function syncPriceListsFromERP(priceLists = [], versions = []) {
-  ensureDB();
-  const now = new Date().toISOString();
-  const runSync = db.transaction(() => {
-    let plCount = 0;
-    let vCount = 0;
-
-    for (const pl of priceLists) {
-      const existing = db.prepare('SELECT id FROM price_lists WHERE idempiere_id = ?').get(pl.id);
-      let plId;
-      if (existing) {
-        plId = existing.id;
-        db.prepare(`
-          UPDATE price_lists
-          SET name = ?, description = ?, is_active = ?, synced_at = ?
-          WHERE id = ?
-        `).run(pl.Name, pl.Description || '', pl.IsActive !== false ? 1 : 0, now, plId);
-      } else {
-        const info = db.prepare(`
-          INSERT INTO price_lists (idempiere_id, name, description, currency_code, is_so_pricelist, is_default, is_active, synced_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(pl.id, pl.Name, pl.Description || '', pl.C_Currency_ID?.identifier || 'USD', pl.IsSOPriceList ? 1 : 0, pl.IsDefault ? 1 : 0, pl.IsActive !== false ? 1 : 0, now);
-        plId = info.lastInsertRowid;
-      }
-      plCount++;
-
-      // Versiones correspondientes
-      const relatedVersions = versions.filter(v => v.M_PriceList_ID?.id === pl.id || !v.M_PriceList_ID);
-      for (const ver of relatedVersions) {
-        const existingV = db.prepare('SELECT id FROM price_list_versions WHERE idempiere_id = ?').get(ver.id);
-        if (existingV) {
-          db.prepare(`
-            UPDATE price_list_versions
-            SET name = ?, valid_from = ?, is_active = ?, synced_at = ?
-            WHERE id = ?
-          `).run(ver.Name, ver.ValidFrom || now.split('T')[0], ver.IsActive !== false ? 1 : 0, now, existingV.id);
-        } else {
-          db.prepare(`
-            INSERT INTO price_list_versions (idempiere_id, price_list_id, name, valid_from, is_active, synced_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(ver.id, plId, ver.Name, ver.ValidFrom || now.split('T')[0], ver.IsActive !== false ? 1 : 0, now);
+  const tx = d.transaction(() => {
+    switch (catalogName) {
+      case 'product_categories': {
+        const stmt = d.prepare(`
+          INSERT INTO product_categories (id, value, name, description, is_active, synced_at)
+          VALUES (@id, @value, @name, @description, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            value = excluded.value,
+            name = excluded.name,
+            description = excluded.description,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            value: r.Value || `CAT-${r.id}`,
+            name: r.Name || 'Sin Nombre',
+            description: r.Description || '',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
         }
-        vCount++;
+        break;
       }
-    }
-    return { priceListsCount: plCount, versionsCount: vCount };
-  });
 
-  return runSync();
-}
-
-function syncCustomerCategoriesFromERP(records = []) {
-  ensureDB();
-  const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO customer_categories (idempiere_id, value, name, description, is_default, is_active, synced_at)
-    VALUES (@idempiere_id, @value, @name, @description, @is_default, @is_active, @synced_at)
-    ON CONFLICT(value) DO UPDATE SET
-      idempiere_id = excluded.idempiere_id,
-      name = excluded.name,
-      description = excluded.description,
-      is_default = excluded.is_default,
-      is_active = excluded.is_active,
-      synced_at = excluded.synced_at
-  `);
-
-  const runSync = db.transaction((recs) => {
-    let count = 0;
-    for (const r of recs) {
-      upsert.run({
-        idempiere_id: r.id || r.C_BP_Group_ID,
-        value: r.Value || `BPG_${r.id}`,
-        name: r.Name || 'Categoría Cliente',
-        description: r.Description || '',
-        is_default: r.IsDefault ? 1 : 0,
-        is_active: r.IsActive !== false ? 1 : 0,
-        synced_at: now
-      });
-      count++;
-    }
-    return count;
-  });
-
-  return runSync(records);
-}
-
-function syncTaxesFromERP(records = []) {
-  ensureDB();
-  const now = new Date().toISOString();
-  const runSync = db.transaction((recs) => {
-    let count = 0;
-    for (const r of recs) {
-      const existing = db.prepare('SELECT id FROM taxes WHERE idempiere_id = ?').get(r.id);
-      if (existing) {
-        db.prepare(`
-          UPDATE taxes
-          SET name = ?, description = ?, rate = ?, tax_indicator = ?, is_active = ?, valid_from = ?, synced_at = ?
-          WHERE id = ?
-        `).run(r.Name, r.Description || '', parseFloat(r.Rate) || 0.0, r.TaxIndicator || '', r.IsActive !== false ? 1 : 0, r.ValidFrom || now.split('T')[0], now, existing.id);
-      } else {
-        db.prepare(`
-          INSERT INTO taxes (idempiere_id, name, description, rate, tax_indicator, is_active, valid_from, synced_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(r.id, r.Name, r.Description || '', parseFloat(r.Rate) || 0.0, r.TaxIndicator || '', r.IsActive !== false ? 1 : 0, r.ValidFrom || now.split('T')[0], now);
+      case 'products': {
+        const stmt = d.prepare(`
+          INSERT INTO products (id, value, name, category, category_id, category_name, price, stock, image, description, is_active, synced_at)
+          VALUES (@id, @value, @name, @category, @category_id, @category_name, @price, @stock, @image, @description, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            value = excluded.value,
+            name = excluded.name,
+            category = excluded.category,
+            category_id = excluded.category_id,
+            category_name = excluded.category_name,
+            description = excluded.description,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            value: r.Value || `PROD-${r.id}`,
+            name: r.Name || 'Sin Nombre',
+            category: r.M_Product_Category_ID?.identifier || 'Especialidades',
+            category_id: r.M_Product_Category_ID?.id || null,
+            category_name: r.M_Product_Category_ID?.identifier || 'General',
+            price: r.PriceStd || r.PriceList || 0,
+            stock: 50,
+            image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80',
+            description: r.Description || '',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
       }
-      count++;
+
+      case 'price_lists': {
+        const stmt = d.prepare(`
+          INSERT INTO price_lists (id, name, description, currency, currency_code, is_active, synced_at)
+          VALUES (@id, @name, @description, @currency, @currency_code, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            currency = excluded.currency,
+            currency_code = excluded.currency_code,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            name: r.Name || 'Lista de Precios',
+            description: r.Description || '',
+            currency: r.C_Currency_ID?.identifier || 'USD',
+            currency_code: r.C_Currency_ID?.identifier || 'USD',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      case 'price_list_versions': {
+        const stmt = d.prepare(`
+          INSERT INTO price_list_versions (id, price_list_id, name, valid_from, is_active, synced_at)
+          VALUES (@id, @price_list_id, @name, @valid_from, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            price_list_id = excluded.price_list_id,
+            name = excluded.name,
+            valid_from = excluded.valid_from,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            price_list_id: r.M_PriceList_ID?.id || 101,
+            name: r.Name || 'Versión',
+            valid_from: r.ValidFrom || '2026-01-01',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      case 'product_prices': {
+        const stmt = d.prepare(`
+          INSERT INTO product_prices (id, price_list_version_id, product_id, product_name, price_list, price_std, price_limit, synced_at)
+          VALUES (@id, @price_list_version_id, @product_id, @product_name, @price_list, @price_std, @price_limit, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            price_list_version_id = excluded.price_list_version_id,
+            product_id = excluded.product_id,
+            product_name = excluded.product_name,
+            price_list = excluded.price_list,
+            price_std = excluded.price_std,
+            price_limit = excluded.price_limit,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            price_list_version_id: r.M_PriceList_Version_ID?.id || 101,
+            product_id: r.M_Product_ID?.id || 0,
+            product_name: r.M_Product_ID?.identifier || 'Producto',
+            price_list: parseFloat(r.PriceList) || 0,
+            price_std: parseFloat(r.PriceStd) || 0,
+            price_limit: parseFloat(r.PriceLimit) || 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      case 'customer_categories': {
+        const stmt = d.prepare(`
+          INSERT INTO customer_categories (id, value, name, description, is_active, synced_at)
+          VALUES (@id, @value, @name, @description, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            value = excluded.value,
+            name = excluded.name,
+            description = excluded.description,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            value: r.Value || `GRP-${r.id}`,
+            name: r.Name || 'Grupo',
+            description: r.Description || '',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      case 'customers': {
+        const stmt = d.prepare(`
+          INSERT INTO customers (id, value, name, tax_id, group_id, group_name, email, phone, is_customer, is_vendor, is_active, synced_at)
+          VALUES (@id, @value, @name, @tax_id, @group_id, @group_name, @email, @phone, @is_customer, @is_vendor, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            value = excluded.value,
+            name = excluded.name,
+            tax_id = excluded.tax_id,
+            group_id = excluded.group_id,
+            group_name = excluded.group_name,
+            is_customer = excluded.is_customer,
+            is_vendor = excluded.is_vendor,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            value: r.Value || `BP-${r.id}`,
+            name: r.Name || 'Socio de Negocio',
+            tax_id: r.TaxID || r.Value || '',
+            group_id: r.C_BP_Group_ID?.id || null,
+            group_name: r.C_BP_Group_ID?.identifier || 'General',
+            email: r.EMail || '',
+            phone: r.Phone || '',
+            is_customer: r.IsCustomer ? 1 : 0,
+            is_vendor: r.IsVendor ? 1 : 0,
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      case 'taxes': {
+        const stmt = d.prepare(`
+          INSERT INTO taxes (id, name, description, rate, tax_indicator, is_active, synced_at)
+          VALUES (@id, @name, @description, @rate, @tax_indicator, @is_active, @synced_at)
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            rate = excluded.rate,
+            tax_indicator = excluded.tax_indicator,
+            is_active = excluded.is_active,
+            synced_at = excluded.synced_at
+        `);
+        for (const r of records) {
+          stmt.run({
+            id: r.id,
+            name: r.Name || 'Impuesto',
+            description: r.Description || '',
+            rate: parseFloat(r.Rate) || 0,
+            tax_indicator: r.TaxIndicator || '',
+            is_active: r.IsActive !== false ? 1 : 0,
+            synced_at: timestamp
+          });
+          count++;
+        }
+        break;
+      }
+
+      default:
+        throw new Error(`Catálogo no soportado para sincronización: ${catalogName}`);
     }
-    return count;
+
+    d.prepare(`
+      INSERT INTO sync_logs (catalog, count, status, message)
+      VALUES (?, ?, 'SUCCESS', ?)
+    `).run(catalogName, count, `Sincronizados ${count} registros desde iDempiere ERP.`);
   });
 
-  return runSync(records);
+  tx();
+  return { success: true, catalog: catalogName, count };
 }
 
-// =====================================================================
-// CONSUMIDORES, MÉTRICAS Y PEDIDOS
-// =====================================================================
+function getSyncLogs(limit = 20) {
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM sync_logs ORDER BY id DESC LIMIT ?').all(Number(limit));
+}
 
+// Métodos de sincronización específicos para retrocompatibilidad con /api/catalogs/sync-all
+function syncProductCategoriesFromERP(records) {
+  const res = syncCatalogFromERP('product_categories', records);
+  return res.count;
+}
+
+function syncProductsFromERP(records) {
+  const res = syncCatalogFromERP('products', records);
+  return res.count;
+}
+
+function syncPriceListsFromERP(plRecords, plvRecords = []) {
+  const plRes = syncCatalogFromERP('price_lists', plRecords);
+  let plvCount = 0;
+  if (Array.isArray(plvRecords) && plvRecords.length > 0) {
+    const plvRes = syncCatalogFromERP('price_list_versions', plvRecords);
+    plvCount = plvRes.count;
+  }
+  return { priceListsCount: plRes.count, versionsCount: plvCount };
+}
+
+function syncCustomerCategoriesFromERP(records) {
+  const res = syncCatalogFromERP('customer_categories', records);
+  return res.count;
+}
+
+function syncTaxesFromERP(records) {
+  const res = syncCatalogFromERP('taxes', records);
+  return res.count;
+}
+
+// ==========================================
+// 8. CONSUMIDORES & MÉTRICAS
+// ==========================================
 function getConsumers() {
-  ensureDB();
-  return db.prepare('SELECT * FROM consumers ORDER BY orders_count DESC').all();
+  const d = getDatabase();
+  return d.prepare('SELECT * FROM consumers ORDER BY orders_count DESC').all();
 }
 
 function getConsumerMetrics() {
-  ensureDB();
+  const d = getDatabase();
   const list = getConsumers();
   const totalConsumers = list.length;
   const vipCount = list.filter(c => c.tier === 'VIP').length;
@@ -1101,9 +1338,12 @@ function getConsumerMetrics() {
   };
 }
 
+// ==========================================
+// 9. PEDIDOS (PWA vs E-COMMERCE)
+// ==========================================
 function getOrders() {
-  ensureDB();
-  const rows = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
+  const d = getDatabase();
+  const rows = d.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
   return rows.map(r => ({
     ...r,
     items: JSON.parse(r.items_json || '[]'),
@@ -1113,7 +1353,7 @@ function getOrders() {
 }
 
 function addOrder(orderData) {
-  ensureDB();
+  const d = getDatabase();
   const origin = orderData.origin === 'pwa' ? 'pwa' : 'ecommerce';
   const newOrder = {
     id: `ORD-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -1132,7 +1372,7 @@ function addOrder(orderData) {
     erp_context_json: null
   };
 
-  db.prepare(`
+  d.prepare(`
     INSERT INTO orders (id, origin, channel, vendor, customer, items_json, total, status, idempiere_synced, idempiere_order_id, timestamp, address, payment, erp_context_json)
     VALUES (@id, @origin, @channel, @vendor, @customer, @items_json, @total, @status, @idempiere_synced, @idempiere_order_id, @timestamp, @address, @payment, @erp_context_json)
   `).run(newOrder);
@@ -1145,9 +1385,9 @@ function addOrder(orderData) {
 }
 
 function updateOrderStatus(id, status) {
-  ensureDB();
-  db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  const d = getDatabase();
+  d.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
+  const row = d.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!row) return null;
   return {
     ...row,
@@ -1157,7 +1397,7 @@ function updateOrderStatus(id, status) {
 }
 
 function syncOrderWithERP(id, erpContext = {}) {
-  ensureDB();
+  const d = getDatabase();
   const generatedC_Order_ID = `C_Order_${Math.floor(100000 + Math.random() * 900000)}`;
   const contextObj = {
     clientId: erpContext.clientId || 11,
@@ -1167,13 +1407,13 @@ function syncOrderWithERP(id, erpContext = {}) {
     syncedAt: new Date().toISOString()
   };
 
-  db.prepare(`
+  d.prepare(`
     UPDATE orders
     SET idempiere_synced = 1, idempiere_order_id = ?, erp_context_json = ?
     WHERE id = ?
   `).run(generatedC_Order_ID, JSON.stringify(contextObj), id);
 
-  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
+  const row = d.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!row) return null;
   return {
     ...row,
@@ -1183,10 +1423,13 @@ function syncOrderWithERP(id, erpContext = {}) {
   };
 }
 
+// ==========================================
+// 10. ESTADO DEL MOTOR SQLITE
+// ==========================================
 function getDbStatus() {
   try {
-    ensureDB();
-    if (!db) {
+    const d = getDatabase();
+    if (!d) {
       return {
         mode: 'sqlite_offline',
         rdbms: 'SQLite 3 (better-sqlite3)',
@@ -1195,14 +1438,17 @@ function getDbStatus() {
       };
     }
     const counts = {
-      products: db.prepare('SELECT COUNT(*) as c FROM products').get().c,
-      product_categories: db.prepare('SELECT COUNT(*) as c FROM product_categories').get().c,
-      price_lists: db.prepare('SELECT COUNT(*) as c FROM price_lists').get().c,
-      price_list_versions: db.prepare('SELECT COUNT(*) as c FROM price_list_versions').get().c,
-      customer_categories: db.prepare('SELECT COUNT(*) as c FROM customer_categories').get().c,
-      taxes: db.prepare('SELECT COUNT(*) as c FROM taxes').get().c,
-      consumers: db.prepare('SELECT COUNT(*) as c FROM consumers').get().c,
-      orders: db.prepare('SELECT COUNT(*) as c FROM orders').get().c
+      products: d.prepare('SELECT COUNT(*) as c FROM products').get().c,
+      product_categories: d.prepare('SELECT COUNT(*) as c FROM product_categories').get().c,
+      price_lists: d.prepare('SELECT COUNT(*) as c FROM price_lists').get().c,
+      price_list_versions: d.prepare('SELECT COUNT(*) as c FROM price_list_versions').get().c,
+      product_prices: d.prepare('SELECT COUNT(*) as c FROM product_prices').get().c,
+      customer_categories: d.prepare('SELECT COUNT(*) as c FROM customer_categories').get().c,
+      customers: d.prepare('SELECT COUNT(*) as c FROM customers').get().c,
+      taxes: d.prepare('SELECT COUNT(*) as c FROM taxes').get().c,
+      sync_logs: d.prepare('SELECT COUNT(*) as c FROM sync_logs').get().c,
+      consumers: d.prepare('SELECT COUNT(*) as c FROM consumers').get().c,
+      orders: d.prepare('SELECT COUNT(*) as c FROM orders').get().c
     };
 
     return {
@@ -1214,6 +1460,13 @@ function getDbStatus() {
       wal_mode: true,
       tables: Object.keys(counts),
       counts,
+      stats: {
+        products: counts.products,
+        categories: counts.product_categories,
+        prices: counts.product_prices,
+        customers: counts.customers,
+        taxes: counts.taxes
+      },
       total_products: counts.products,
       total_consumers: counts.consumers,
       total_orders: counts.orders,
@@ -1231,6 +1484,8 @@ function getDbStatus() {
 
 module.exports = {
   initDB,
+  getDatabase,
+  ensureDB,
   getDbStatus,
   // Productos
   getProducts,
@@ -1245,29 +1500,42 @@ module.exports = {
   addProductCategory,
   updateProductCategory,
   deleteProductCategory,
-  // Listas de Precios y Versiones
+  // Listas de Precios y Precios
   getPriceLists,
   getPriceListById,
   addPriceList,
   updatePriceList,
   deletePriceList,
+  getPriceListVersions,
   addPriceListVersion,
   deletePriceListVersion,
-  // Categorías de Clientes
+  getProductPrices,
+  addProductPrice,
+  updateProductPrice,
+  deleteProductPrice,
+  // Categorías de Clientes (C_BP_Group)
   getCustomerCategories,
   getCustomerCategoryById,
   addCustomerCategory,
   updateCustomerCategory,
   deleteCustomerCategory,
-  // Impuestos (Solo Lectura)
+  // Clientes (C_BPartner)
+  getCustomers,
+  getCustomerById,
+  addCustomer,
+  updateCustomer,
+  deleteCustomer,
+  // Impuestos (C_Tax) - SOLO LECTURA
   getTaxes,
-  // Sincronización desde ERP
+  // Sincronización y Logs
+  syncCatalogFromERP,
+  getSyncLogs,
   syncProductCategoriesFromERP,
   syncProductsFromERP,
   syncPriceListsFromERP,
   syncCustomerCategoriesFromERP,
   syncTaxesFromERP,
-  // Métricas y Pedidos
+  // Consumidores, Métricas y Pedidos
   getConsumers,
   getConsumerMetrics,
   getOrders,

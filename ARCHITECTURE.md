@@ -17,18 +17,20 @@ graph TD
         NodeServer --> RouteEcom["Ruta '/' -> Astro SSG Static (server/public/ecommerce)"]
         NodeServer --> RoutePWA["Ruta '/app/*' -> React Vite PWA (server/public/pwa)"]
         NodeServer --> RouteAdmin["Ruta '/admin/*' -> React Vite Admin (server/public/admin)"]
-        NodeServer --> RouteAPI["Ruta '/api/*' -> REST Endpoints"]
+        NodeServer --> RouteAPI["Ruta '/api/*' -> REST Endpoints & Datamart"]
         NodeServer --> RouteAuth["Ruta '/api/auth/*' -> iDempiere Gateway"]
+        NodeServer --> RouteProxy["Ruta '/api/idempiere-proxy' -> Reverse Proxy Anti-CORS"]
     end
 
-    subgraph "Persistencia Dual (server/src/db.js)"
-        RouteAPI --> DBRouter{¿MySQL Conectado?}
-        DBRouter -- Sí --> MySQL[(MySQL Database :3306)]
-        DBRouter -- Fallo / Sin credenciales --> InMemory[(Almacén In-Memory con Seeds)]
+    subgraph "Persistencia SQLite Datamart 11 Tablas (server/src/db.js)"
+        RouteAPI --> SQLiteEngine[better-sqlite3 Engine]
+        SQLiteEngine --> SQLiteFile[(hamburger_rapid.sqlite WAL Mode /data)]
+        SQLiteEngine -. Fallback si volumen no soporta WAL .-> SQLiteMem[(Memory DB :memory: Fallback)]
     end
 
     subgraph "Integración Externa ERP (server/src/services/idempiereService.js)"
         RouteAuth --> ERPClient[iDempiere REST API v1 Client]
+        RouteProxy --> ERPClient
         ERPClient --> ERPCheck{¿iDempiere Live Disponible?}
         ERPCheck -- Sí --> IdempiereLive[iDempiere ERP Server /api/v1/auth/tokens]
         ERPCheck -- Fallback / Demo --> SandboxGardenWorld[Sandbox Simulado GardenWorld]
@@ -60,33 +62,47 @@ graph TD
 ### 2.3. Capa 3: Panel Administrativo y Backoffice (`apps/admin`)
 * **Framework:** React 18 + Vite (`apps/admin/vite.config.js`).
 * **Configuración Base:** `base: '/admin/'`.
+* **Diseño y Shell Modular (`SidebarNavbar` & `DashboardLayout`):**
+  * **SidebarNavbar Colapsable:** Barra lateral con Phosphor & Lucide vectors, modo abierto (`240px`) con Company Switcher, secciones (*General, Comercial, Operaciones, Finanzas, Sistema*), badges numéricos y modo colapsado (`56px`) persistente en `localStorage`.
+  * **Top Header Bar:** Barra superior fija con pill de usuario, selector de proxy, botón modal *Token Info* y switch de temas.
+  * **14 Subvistas Especializadas:**
+    1. `OrderManagement.jsx`: Bandeja de pedidos con filtrado PWA vs E-commerce y modal payload `C_Order`.
+    2. `GeneralSummaryView.jsx`: Dashboard ejecutivo con KPIs y balance de clientes.
+    3. `BurgerCatalogView.jsx`: Catálogo visual de las 10 hamburguesas insignia y ajuste de stock.
+    4. `CustomerMetricsView.jsx`: Segmentación y métricas de consumo (VIP Gold, Regular, Ocasional).
+    5. `ProductCategoriesView.jsx`: Mantenimiento y sincronización de `M_Product_Category`.
+    6. `ProductsView.jsx`: Mantenimiento y sincronización de `M_Product`.
+    7. `PriceListsView.jsx`: Listas, versiones y asignación de precios `M_PriceList` / `M_ProductPrice`.
+    8. `CustomerCategoriesView.jsx`: Mantenimiento y sincronización de `C_BP_Group`.
+    9. `CustomersView.jsx`: Mantenimiento y sincronización de `C_BPartner`.
+    10. `TaxesView.jsx`: Catálogo fiscal `C_Tax` (**Estricto Solo Lectura**).
+    11. `DatabaseStatusView.jsx`: Telemetría de SQLite Datamart, historial de sincronización y sincronización masiva en 1 clic.
+    12. `IDempiereIntegrationView.jsx`: Consola de diagnóstico Live Ping en milisegundos.
+    13. `ProfileConfigView.jsx`: Parámetros de sesión y selector de modo 1-paso / 2-pasos.
+    14. `TokenInfoModal.jsx`: Inspector forense de tokens Bearer y contexto multitenant.
 * **Seguridad y Control de Acceso (`AuthGuard`):**
   * Acceso universal: Permite el ingreso a **cualquier usuario con credenciales activas en iDempiere ERP** (sin restricción arbitraria por rol para acceder a la consola).
   * Persistencia de sesión en `sessionStorage` y `localStorage` (`token`, `userId`, `clientId`, `roleId`, `orgId` / `organizationId`, `warehouseId`, `language`).
-  * `AuthGuard` modular que redirige inmediatamente al login si no hay token válido, y expone botón de **Cerrar Sesión**.
+  * `AuthGuard` modular no bloqueante que renderiza el login ante sesión inactiva y desbloquea el backoffice ante sesión válida.
 * **Modalidades de Autenticación iDempiere v1:**
-  1. **Modalidad 1: Login Directo / 1 Paso:** Envía credenciales y parámetros de contexto en una sola solicitud atómica.
-  2. **Modalidad 2: Login Asistido en 2 Pasos (Multitenant Dinámico):**
+  1. **Modalidad 1: Login Directo / 1 Paso:** Envía credenciales y parámetros de contexto en una sola solicitud atómica (`POST /api/v1/auth/tokens`).
+  2. **Modalidad 2: Login Asistido en 2 Pasos (Multitenant Dinámico Oficial bxservice):**
      * *Paso 1:* Envío exclusivo de `userName` y `password` para consultar tenants, roles, organizaciones y almacenes asignados.
-     * *Paso 2:* Selección en desplegables dinámicos y confirmación para obtener el token Bearer definitivo.
+     * *Paso 2:* Selección en desplegables dinámicos y emisión de token vía `PUT /api/v1/auth/tokens` con `Authorization: Bearer <stage1Token>`.
 * **Manejo de Conectividad y CORS:**
   * Selector en pantalla: **Proxy Backend Local** (vía Express `/api/auth/login`), **CORS Proxy Público** (`https://corsproxy.io/?`) o **REST Directo**.
-  * URL base configurable (GardenWorld Live `https://test.idempiere.org:443` o local `http://localhost:8080`).
+  * URL base configurable (`https://test.idempiere.org` o `http://localhost:8080`).
   * Botón de **"Cargar Demo GardenWorld"** y Acceso Rápido 1-Clic.
-* **Bandeja Central de Gestión de Pedidos (`OrdersManagementView`):**
-  * Articulación operativa de las 3 capas:
-    * Filtrado por Origen: **📱 PWA Preventa / Vendedores** (con vendedor y ruta) vs **🛒 E-commerce Web** (pedidos directos).
-    * Sincronización a iDempiere ERP: Generación de documento `C_Order` con trazabilidad del ID generado.
-* **Biblioteca Base Reutilizable:** `idempiereAuthService.js` implementado sin dependencias acopladas para su futura importación en la PWA de Pedidos.
 * **Salida de Compilación:** Compila en `apps/admin/dist` y se sincroniza a `server/public/admin`. Servido bajo el prefijo `/admin`.
 
 ### 2.4. Capa 4: Runtime Backend y API Gateway (`server`)
-* **Runtime:** Node.js 20 LTS + Express.
+* **Runtime:** Node.js 22 LTS (Alpine en Docker) + Express.
 * **Módulo Principal:** `server/src/app.js`.
 * **Responsabilidades:**
   1. **Servidor Estático Multiruta:** Distribuye las 3 aplicaciones web SPA/SSG compiladas con soporte para fallback de páginas informativas.
-  2. **API REST Unificada:** Proveedor de datos para catálogo, órdenes, métricas de consumo y sincronización ERP.
-  3. **Gateway de Autenticación iDempiere ERP:** Puente robusto con saneamiento de parámetros (`/api/v1/auth/tokens`), soporte de 1 y 2 pasos y contingencia con Sandbox GardenWorld.
+  2. **API REST Unificada & Datamart:** Proveedor de datos para catálogo, órdenes, métricas de consumo y sincronización ERP.
+  3. **Proxy Anti-CORS Server-to-Server:** `/api/idempiere-proxy?target=` reenviando peticiones seguras al ERP.
+  4. **Gateway de Autenticación iDempiere ERP:** Puente robusto con saneamiento de parámetros (`/api/v1/auth/tokens`), soporte de 1 y 2 pasos y contingencia con Sandbox GardenWorld.
 
 ---
 
@@ -95,16 +111,18 @@ graph TD
 En la presente fase se ha descartado definitivamente MySQL, adoptando **SQLite 3 (`better-sqlite3`)** como motor único de base de datos para producción y desarrollo local:
 
 * **Ubicación Física:** `server/data/hamburger_rapid.sqlite` (con volumen persistente en Docker `/app/server/data`).
-* **Concurrencia:** Habilitado en modo **WAL (`journal_mode = WAL`)** con escrituras atómicas síncronas normales (`synchronous = NORMAL`) y claves foráneas activas.
-* **Modelo de Datos:** 8 tablas relacionales que soportan tanto el menú de hamburguesas como los 5 catálogos sincronizados desde iDempiere ERP:
+* **Concurrencia:** Habilitado en modo **WAL (`journal_mode = WAL`)** con escrituras atómicas síncronas normales (`synchronous = NORMAL`) y claves foráneas activas (`foreign_keys = ON`), con degradación transparente a `DELETE` o `:memory:` si el volumen del host no admite memoria compartida POSIX.
+* **Modelo de Datos:** 11 tablas relacionales que soportan el menú de hamburguesas, clientes, órdenes y los 6 catálogos sincronizados desde iDempiere ERP:
 
 ```mermaid
 erDiagram
     PRODUCTS ||--o{ ORDERS : "incluido en"
     PRODUCT_CATEGORIES ||--o{ PRODUCTS : "clasifica"
     PRICE_LISTS ||--|{ PRICE_LIST_VERSIONS : "contiene"
-    PRICE_LISTS ||--o{ PRODUCTS : "fija precio"
-    CUSTOMER_CATEGORIES ||--o{ CONSUMERS : "segmenta"
+    PRICE_LIST_VERSIONS ||--o{ PRODUCT_PRICES : "contiene precios"
+    PRODUCTS ||--o{ PRODUCT_PRICES : "tarifa asignada"
+    CUSTOMER_CATEGORIES ||--o{ CUSTOMERS : "agrupa"
+    CUSTOMERS ||--o{ ORDERS : "emite orden"
     TAXES ||--o{ PRODUCTS : "grava"
 
     PRODUCTS {
@@ -150,6 +168,17 @@ erDiagram
         string synced_at
     }
 
+    PRODUCT_PRICES {
+        int id PK
+        int price_list_version_id FK
+        int product_id FK
+        string product_name
+        decimal price_list
+        decimal price_std
+        decimal price_limit
+        string synced_at
+    }
+
     CUSTOMER_CATEGORIES {
         int id PK
         int idempiere_id
@@ -161,6 +190,18 @@ erDiagram
         string synced_at
     }
 
+    CUSTOMERS {
+        int id PK
+        int idempiere_id
+        string value UK
+        string name
+        string tax_id
+        int group_id FK
+        string email
+        string phone
+        string synced_at
+    }
+
     TAXES {
         int id PK
         int idempiere_id
@@ -169,6 +210,28 @@ erDiagram
         string tax_indicator
         int is_active
         string synced_at
+    }
+
+    SYNC_LOGS {
+        int id PK
+        string catalog
+        int count
+        string status
+        string message
+        string timestamp
+    }
+
+    ORDERS {
+        string id PK
+        string origin
+        string channel
+        string vendor
+        string customer
+        decimal total
+        string status
+        int idempiere_synced
+        string idempiere_order_id
+        string timestamp
     }
 ```
 ```
@@ -228,31 +291,38 @@ sequenceDiagram
 
 | Método | Endpoint | Descripción | Componente Consumidor |
 |---|---|---|---|
-| `GET` | `/api/health` | Estado del servidor, tiempo activo y modo de BD (SQLite) | Admin, Dokploy, Monitoreo |
-| `GET` | `/api/products` | Lista de productos (compatibilidad retroactiva) | Landing, PWA, Admin |
-| `POST` | `/api/products` | Registro de nueva hamburguesa | Admin |
-| `DELETE` | `/api/products/:id` | Eliminación de producto por ID | Admin |
-| `POST` | `/api/reset` | Restablece catálogo original de hamburguesas | Admin |
-| `GET` | `/api/catalogs/product-categories` | Catálogo de Categorías de Productos (M_Product_Category) | Admin, PWA |
-| `POST` | `/api/catalogs/product-categories` | Crear categoría de producto (Mantenible) | Admin |
-| `PUT` | `/api/catalogs/product-categories/:id` | Actualizar categoría de producto (Mantenible) | Admin |
-| `DELETE` | `/api/catalogs/product-categories/:id` | Eliminar categoría de producto (Mantenible) | Admin |
-| `GET` | `/api/catalogs/products` | Catálogo maestro de productos (M_Product) | Admin, PWA, Ecommerce |
-| `POST` | `/api/catalogs/products` | Crear producto en catálogo maestro (Mantenible) | Admin |
-| `PUT` | `/api/catalogs/products/:id` | Actualizar producto (Mantenible) | Admin |
-| `DELETE` | `/api/catalogs/products/:id` | Eliminar producto (Mantenible) | Admin |
-| `GET` | `/api/catalogs/price-lists` | Listas de precios y versiones (M_PriceList) | Admin, PWA |
-| `POST` | `/api/catalogs/price-lists` | Crear lista de precios (Mantenible) | Admin |
-| `PUT` | `/api/catalogs/price-lists/:id` | Actualizar lista de precios (Mantenible) | Admin |
-| `DELETE` | `/api/catalogs/price-lists/:id` | Eliminar lista de precios (Mantenible) | Admin |
-| `POST` | `/api/catalogs/price-lists/:id/versions` | Crear versión de lista de precios (Mantenible) | Admin |
-| `DELETE` | `/api/catalogs/price-list-versions/:id` | Eliminar versión de lista de precios (Mantenible) | Admin |
-| `GET` | `/api/catalogs/customer-categories` | Categorías de Clientes (C_BP_Group) | Admin, PWA |
-| `POST` | `/api/catalogs/customer-categories` | Crear categoría de cliente (Mantenible) | Admin |
-| `PUT` | `/api/catalogs/customer-categories/:id` | Actualizar categoría de cliente (Mantenible) | Admin |
-| `DELETE` | `/api/catalogs/customer-categories/:id` | Eliminar categoría de cliente (Mantenible) | Admin |
-| `GET` | `/api/catalogs/taxes` | Tasas impositivas (C_Tax) - **SOLO LECTURA** | Admin, PWA |
-| `POST` | `/api/catalogs/sync-all` | Sincronización maestra de los 5 catálogos iDempiere hacia SQLite | Admin |
+| `GET` | `/api/health` | Estado del servidor, tiempo activo y telemetría de BD (SQLite WAL) | Admin, Dokploy, Monitoreo |
+| `GET` | `/api/products` | Catálogo de hamburguesas gourmet (M_Product) | Landing, PWA, Admin |
+| `POST` | `/api/products` | Registro de nuevo producto | Admin |
+| `PUT` | `/api/products/:id` | Actualización de producto | Admin |
+| `DELETE` | `/api/products/:id` | Eliminación de producto | Admin |
+| `POST` | `/api/reset` | Restablece catálogo original de hamburguesas de autor | Admin |
+| `GET` | `/api/product-categories` | Catálogo de Categorías de Productos (M_Product_Category) | Admin, PWA |
+| `POST` | `/api/product-categories` | Crear categoría de producto | Admin |
+| `PUT` | `/api/product-categories/:id` | Actualizar categoría de producto | Admin |
+| `DELETE` | `/api/product-categories/:id` | Eliminar categoría de producto | Admin |
+| `GET` | `/api/price-lists` | Listas de precios (M_PriceList) | Admin, PWA |
+| `POST` | `/api/price-lists` | Crear lista de precios | Admin |
+| `PUT` | `/api/price-lists/:id` | Actualizar lista de precios | Admin |
+| `DELETE` | `/api/price-lists/:id` | Eliminar lista de precios | Admin |
+| `GET` | `/api/price-list-versions` | Versiones de listas de precios (M_PriceList_Version) | Admin |
+| `GET` | `/api/product-prices` | Precios específicos por versión (M_ProductPrice) | Admin |
+| `POST` | `/api/product-prices` | Asignar precio de producto | Admin |
+| `PUT` | `/api/product-prices/:id` | Actualizar precio de producto | Admin |
+| `DELETE` | `/api/product-prices/:id` | Eliminar precio de producto | Admin |
+| `GET` | `/api/customer-categories` | Categorías de Clientes (C_BP_Group) | Admin, PWA |
+| `POST` | `/api/customer-categories` | Crear categoría de cliente | Admin |
+| `PUT` | `/api/customer-categories/:id` | Actualizar categoría de cliente | Admin |
+| `DELETE` | `/api/customer-categories/:id` | Eliminar categoría de cliente | Admin |
+| `GET` | `/api/customers` | Clientes / Terceros (C_BPartner) | Admin |
+| `POST` | `/api/customers` | Registrar nuevo cliente | Admin |
+| `PUT` | `/api/customers/:id` | Actualizar cliente | Admin |
+| `DELETE` | `/api/customers/:id` | Eliminar cliente | Admin |
+| `GET` | `/api/taxes` | Catálogo fiscal (C_Tax) - **SOLO LECTURA** | Admin, PWA |
+| `ALL` | `/api/taxes/*` | Bloqueo estricto de mutaciones (Retorna HTTP 405 Method Not Allowed) | Seguridad |
+| `POST` | `/api/sync/:catalog` | Sincronización transaccional de catálogo desde iDempiere ERP | Admin |
+| `GET` | `/api/sync/logs` | Historial de auditoría y registros de sincronización | Admin |
+| `ALL` | `/api/idempiere-proxy?target=` | Reverse Proxy Server-to-Server para esquivar bloqueos de CORS | Admin, Frontend |
 | `GET` | `/api/consumers` | Lista de consumidores registrados | Admin |
 | `GET` | `/api/metrics/consumers` | Métricas agregadas y segmentación de clientes | Admin |
 | `GET` | `/api/orders` | Historial de pedidos unificados (PWA y E-commerce) | PWA, Admin |

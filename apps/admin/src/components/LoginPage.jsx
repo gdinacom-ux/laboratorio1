@@ -42,7 +42,7 @@ export default function LoginPage() {
     roleId: 102,
     organizationId: 11,
     warehouseId: 103,
-    language: 'en_US'
+    language: 'es_PE'
   });
 
   const [errorDetails, setErrorDetails] = useState(null);
@@ -99,7 +99,7 @@ export default function LoginPage() {
       connectionMode
     );
 
-    if (!result.success && result.details) {
+    if (result && !result.success && result.details) {
       setErrorDetails(result.details);
     }
   };
@@ -116,7 +116,7 @@ export default function LoginPage() {
     );
 
     if (result.success && !result.authenticated) {
-      const data = result.contextData;
+      const data = result.contextData || result;
       setAvailableContext(data);
       setStage1Token(data.stage1Token || null);
       // Auto-seleccionar primer elemento disponible
@@ -125,7 +125,7 @@ export default function LoginPage() {
         roleId: data.roles?.[0]?.id ?? 102,
         organizationId: data.organizations?.[0]?.id ?? 11,
         warehouseId: data.warehouses?.[0]?.id ?? 103,
-        language: data.languages?.[0]?.id ?? 'en_US'
+        language: data.languages?.[0]?.id ?? 'es_PE'
       });
       setCurrentStep(2);
     }
@@ -659,6 +659,7 @@ export default function LoginPage() {
                       onChange={(e) => handleParamChange('language', e.target.value)}
                       style={{ width: '100%', padding: '6px 8px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '6px', color: 'white', fontSize: '0.8rem' }}
                     >
+                      <option value="es_PE">es_PE (Español Perú)</option>
                       <option value="en_US">en_US (Inglés Americano)</option>
                       <option value="es_ES">es_ES (Español)</option>
                     </select>
@@ -882,8 +883,9 @@ export default function LoginPage() {
                       onChange={(e) => setSelectedContext(prev => ({ ...prev, language: e.target.value }))}
                       style={{ width: '100%', padding: '8px 10px', background: '#0d0e12', border: '1px solid #334155', borderRadius: '8px', color: 'white', fontSize: '0.82rem' }}
                     >
+                      <option value="es_PE">es_PE (Español)</option>
                       <option value="en_US">en_US (Inglés)</option>
-                      <option value="es_ES">es_ES (Español)</option>
+                      <option value="es_ES">es_ES (Español España)</option>
                     </select>
                   </div>
                 </div>

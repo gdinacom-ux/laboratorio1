@@ -30,7 +30,7 @@ const DEFAULT_IDEMPIERE_CONFIG = {
     roleId: 102,
     organizationId: 11, // REGLA ESTRICTA B: organizationId (NUNCA orgId)
     warehouseId: 103,
-    language: 'en_US'
+    language: 'es_PE'
   }
 };
 
@@ -55,6 +55,7 @@ const SANDBOX_MULTITENANT_CONTEXT = {
     { id: 1000007, name: 'Admin Storage' }
   ],
   languages: [
+    { id: 'es_PE', name: 'Español (Perú)' },
     { id: 'en_US', name: 'English (US)' },
     { id: 'es_ES', name: 'Español (ES)' }
   ]
@@ -81,7 +82,7 @@ function sanitizeAndValidatePayload(userName, password, contextParams = {}) {
   const clientId = Number(rawParams.clientId ?? 11);
   const roleId = Number(rawParams.roleId ?? 102);
   const warehouseId = Number(rawParams.warehouseId ?? 103);
-  const language = String(rawParams.language || 'en_US').trim();
+  const language = String(rawParams.language || 'es_PE').trim();
 
   // Payload estructurado con parámetros anidados en "parameters"
   const payload = {
@@ -223,7 +224,6 @@ async function getAvailableContext(userName, password, options = {}) {
           // 2. Consultar Organizaciones para Client + Role
           const orgsRes = await makeHttpRequest(`${erpBaseUrl}/api/v1/auth/organizations?client=${selectedClient}&role=${selectedRole}`, 'GET', authHeaders, null, 4000);
           if (orgsRes.statusCode === 200 && Array.isArray(orgsRes.data?.organizations) && orgsRes.data.organizations.length > 0) {
-            // Filtrar organización comodín '*' (id: 0) si hay organizaciones específicas
             const filteredOrgs = orgsRes.data.organizations.filter(o => o.id !== 0);
             liveOrganizations = filteredOrgs.length > 0 ? filteredOrgs : orgsRes.data.organizations;
           }
@@ -296,9 +296,6 @@ async function getAvailableContext(userName, password, options = {}) {
  * Generador de respuesta simulada para desarrollo/pruebas locales cuando iDempiere esté offline
  */
 function generateMockIdempiereResponse(payload, targetUrl) {
-  const isGardenWorldAdmin = payload.userName.toLowerCase().includes('admin') ||
-                             payload.userName.toLowerCase().includes('gardenworld');
-
   const randomHash = Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
   const mockToken = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMDAiLCJuYW1lIjoi${Buffer.from(payload.userName).toString('base64').replace(/=/g, '')}Iiwicm9sZSI6IjEwMiIsImNsaWVudCI6IjExIiwib3JnIjoiMTEiLCJpYXQiOjE2OTgwMDAwMDAsImV4cCI6MTg1NTk2MDAwMH0.${randomHash}`;
 
@@ -516,7 +513,7 @@ async function authenticateStep2(stage1Token, contextParams = {}, options = {}) 
   const clientId = Number(rawParams.clientId ?? 11);
   const roleId = Number(rawParams.roleId ?? 102);
   const warehouseId = Number(rawParams.warehouseId ?? 103);
-  const language = String(rawParams.language || 'en_US').trim();
+  const language = String(rawParams.language || 'es_PE').trim();
 
   const putPayload = {
     clientId,

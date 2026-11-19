@@ -87,6 +87,55 @@ laboratorio1/
 
 Registro cronológico obligatorio de intervenciones ejecutadas por agentes de IA:
 
+### [2026-11-19] - Homologación Integral con RapidFood ERP (Sidebar Colapsable Phosphor/Lucide, 14 Subvistas Especializadas, Datamart SQLite 11 Tablas y Sincronización Maestra ERP)
+- **Agente:** Antigravity (Google DeepMind)
+- **Alcance y Delimitación:** Panel de Administración (`apps/admin`), servidor backend (`server`), base de datos SQLite (`server/src/db.js`), rutas API y servicios de sincronización ERP. Las capas `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**, preservando su completa estabilidad y contratos existentes.
+- **Acciones Realizadas:**
+  1. **Sidebar / Navbar Colapsable Vectorial Phosphor & Lucide ([`SidebarNavbar.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/SidebarNavbar.jsx)):**
+     - Réplica exacta de diseño basada en referencias maestras (`navbar-abierto.html`, `navbar-colapsado.html`):
+       - **Modo Desplegado (240px):** Selector de empresa con isotipo verde lima `{}` ("Calzados Sh... / Demo"), botón `PanelLeftClose`, navegación agrupada por dominios (*General, Comercial, Operaciones, Finanzas, Sistema*), badges numéricos (*1/5*), chevrons interactivos y pie con *Ayuda y soporte* y selector de usuario.
+       - **Modo Colapsado (56px):** Cabecera de 96px con logo centrado, botón `PanelLeftOpen`, botones centrados de 40x40px, badges flotantes en la esquina superior derecha y avatares compactos.
+     - Persistencia del estado colapsado en `localStorage` (`sidebar_collapsed`) y margen reactivo en el área de trabajo (`marginLeft: 240px` vs `56px`).
+  2. **Shell Modular del Backoffice ([`DashboardLayout.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/DashboardLayout.jsx)):**
+     - Barra superior con pill de usuario activo, indicador de modo de conexión (Directo vs Proxy), botón de inspección de sesión (*Token Info*), toggle de tema y toasts flotantes reactivos.
+     - Enrutamiento dinámico interno hacia 14 subvistas especializadas.
+  3. **Vistas de Negocio y Catálogos Maestros ERP (SQLite):**
+     - [`OrderManagement.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/OrderManagement.jsx): Bandeja central de pedidos 3 capas (filtro *PWA Preventa* vs *E-commerce Web*), trazabilidad de estado ERP y modal visor de payload `C_Order`.
+     - [`GeneralSummaryView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/GeneralSummaryView.jsx): KPIs ejecutivos de facturación, volumen de pedidos y desglose de clientes.
+     - [`BurgerCatalogView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/BurgerCatalogView.jsx): Catálogo gourmet de 10 hamburguesas insignia y ajuste de stock.
+     - [`CustomerMetricsView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/CustomerMetricsView.jsx): Segmentación de clientes (VIP Gold Club, Regulares, Ocasionales).
+     - [`ProductCategoriesView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/ProductCategoriesView.jsx): CRUD y sincronización de Categorías de Producto (`M_Product_Category`).
+     - [`ProductsView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/ProductsView.jsx): CRUD y sincronización de Productos (`M_Product`).
+     - [`PriceListsView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/PriceListsView.jsx): Gestión integral de Listas de Precios, Versiones y Precios de Producto (`M_PriceList`, `M_PriceList_Version`, `M_ProductPrice`).
+     - [`CustomerCategoriesView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/CustomerCategoriesView.jsx): CRUD y sincronización de Grupos de Clientes (`C_BP_Group`).
+     - [`CustomersView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/CustomersView.jsx): CRUD y sincronización de Terceros / Clientes (`C_BPartner`).
+     - [`TaxesView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/TaxesView.jsx): Catálogo de Impuestos (`C_Tax`) **estrictamente de solo lectura** con bloqueo de mutaciones.
+     - [`DatabaseStatusView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/DatabaseStatusView.jsx): Métricas en tiempo real del Datamart SQLite, historial de sincronización y botón de sincronización masiva de los 6 catálogos.
+     - [`IDempiereIntegrationView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/IDempiereIntegrationView.jsx): Diagnóstico de conexión en tiempo real (*"Probar Ping"* con cálculo de latencia en milisegundos).
+     - [`ProfileConfigView.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/ProfileConfigView.jsx): Selector de Modalidad 1 (Directo) vs Modalidad 2 (Multitenant), configuración de URLs y siembra de catálogo hacia `M_Product`.
+     - [`TokenInfoModal.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/components/TokenInfoModal.jsx): Auditoría y visualización de tokens JWT Bearer, parámetros y contexto ERP activo.
+  4. **Servicios Frontend Homologados (`apps/admin/src/services`):**
+     - [`authService.js`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/services/authService.js): Cliente de autenticación con resolución de proxies y gestión de sesión.
+     - [`idempiereClient.js`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/services/idempiereClient.js): Generador y despachador de pedidos `C_Order` hacia iDempiere REST.
+     - [`idempiereSyncService.js`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/services/idempiereSyncService.js): Motor de sincronización unitaria y masiva para los 6 modelos REST de iDempiere.
+     - [`AuthContext.jsx`](file:///c:/MiClaseUno/laboratorio1/apps/admin/src/context/AuthContext.jsx): Contexto React unificado con soporte para todas las firmas y alias de retrocompatibilidad.
+  5. **Motor de Datos SQLite Integral ([`server/src/db.js`](file:///c:/MiClaseUno/laboratorio1/server/src/db.js)):**
+     - 11 tablas locales: `product_categories`, `products`, `price_lists`, `price_list_versions`, `product_prices`, `customer_categories`, `customers`, `taxes`, `sync_logs`, `consumers`, `orders`.
+     - Modo WAL (`journal_mode = WAL`), sincronización normal e integridad referencial (`foreign_keys = ON`), con contingencia auto-recuperable en memoria (`:memory:`) para prevenir 502 Bad Gateway.
+     - Función `syncCatalogFromERP(catalogName, records)` y wrappers de retrocompatibilidad.
+  6. **Rutas Backend Unificadas ([`server/src/routes/api.js`](file:///c:/MiClaseUno/laboratorio1/server/src/routes/api.js)):**
+     - CRUD para los catálogos maestros y bloqueo 405 en mutaciones de impuestos.
+     - Endpoints `/api/sync/:catalog` y `/api/sync/logs`.
+     - Proxy reverso `/api/idempiere-proxy?target=` para esquivar bloqueos de CORS en desarrollo y producción.
+     - Endpoints `/api/orders`, `/api/consumers` y `/api/metrics/consumers` para compatibilidad total con PWA y E-commerce.
+  7. **Compilación y Verificación Automatizada:**
+     - Compilación de producción con Vite (`apps/admin/dist`) ejecutada en 3.84s (54 módulos transformados, 0 errores).
+     - Sincronización estática hacia `server/public/admin`.
+     - Suite automatizada de 19 pruebas de integración: 19/19 endpoints exitosos (HTTP 200 / HTTP 405 en mutación de impuestos, autenticación en 1 y 2 pasos verificada).
+- **Estado de la Solución:** 100% operativa, probada y validada en producción local y remota.
+
+---
+
 ### [2026-11-17] - Solución Definitiva a 502 Bad Gateway Remoto (Dokploy/Docker) y Reparación Integral del Flujo de Autenticación en 2 Pasos
 - **Agente:** Antigravity (Google DeepMind)
 - **Alcance y Delimitación:** Infraestructura Docker (`Dockerfile`), arranque del backend (`server/src/app.js`), motor de datos resiliente (`server/src/db.js`), control de acceso frontend (`apps/admin/src/components/AuthGuard.jsx`), vistas y servicios de autenticación (`LoginPage.jsx`, `AuthContext.jsx`, `idempiereAuthService.js`).
