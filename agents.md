@@ -87,6 +87,22 @@ laboratorio1/
 
 Registro cronológico obligatorio de intervenciones ejecutadas por agentes de IA:
 
+### [2026-11-26] - Blindaje Anti-Colisión de Puertos Locales (EADDRINUSE Auto-Fallback y Diagnóstico de Proceso)
+- **Agente:** Antigravity (Google DeepMind)
+- **Alcance y Delimitación:** Servidor Express (`server/src/app.js`).
+- **Diagnóstico y Corrección:**
+  1. *Causa raíz del cierre involuntario:* En el entorno local del anfitrión, otro servicio en ejecución (ej: Titan Gym) ocupaba el puerto 3000. Al intentar ejecutar `app.listen(PORT, '0.0.0.0')`, el runtime de Node.js emitía una excepción `listen EADDRINUSE: address already in use 0.0.0.0:3000`, provocando la finalización del proceso Express.
+  2. *Solución implementada:* Se refactorizó la función de arranque en `server/src/app.js` mediante `listenOnPort(currentPort, attemptsLeft)`. Si el puerto por defecto (3000) se encuentra ocupado por otra aplicación, el servidor conmuta de manera autónoma y transparente al siguiente puerto disponible (`3001`, `3002`, etc.) sin interrumpir la ejecución ni generar excepciones fatales.
+  3. *Auditoría de ciclo de vida:* Incorporación de oyentes para señales de sistema (`SIGINT`, `SIGTERM`, `exit`) para diagnóstico continuo.
+- **Verificación Técnica:** Servidor ejecutándose de forma estable en `http://localhost:3001/`:
+  - `GET /api/health` -> HTTP 200 (`STATUS: healthy`, `SQLite WAL`)
+  - `GET /admin/` -> HTTP 200
+  - `GET /app/` -> HTTP 200
+  - `GET /` -> HTTP 200
+- **Estado de la Solución:** 100% operativa y blindada.
+
+---
+
 ### [2026-11-19] - Homologación Integral con RapidFood ERP (Sidebar Colapsable Phosphor/Lucide, 14 Subvistas Especializadas, Datamart SQLite 11 Tablas y Sincronización Maestra ERP)
 - **Agente:** Antigravity (Google DeepMind)
 - **Alcance y Delimitación:** Panel de Administración (`apps/admin`), servidor backend (`server`), base de datos SQLite (`server/src/db.js`), rutas API y servicios de sincronización ERP. Las capas `apps/ecommerce` y `apps/pwa` **NO FUERON MODIFICADAS**, preservando su completa estabilidad y contratos existentes.

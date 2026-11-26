@@ -64,11 +64,11 @@ function initDB() {
       db.pragma('journal_mode = WAL');
     } catch (walErr) {
       console.warn('⚠️ [DB SQLite] journal_mode = WAL falló en el volumen, usando DELETE:', walErr.message);
-      try { db.pragma('journal_mode = DELETE'); } catch (_) {}
+      try { db.pragma('journal_mode = DELETE'); } catch (_) { }
     }
 
-    try { db.pragma('synchronous = NORMAL'); } catch (_) {}
-    try { db.pragma('foreign_keys = ON'); } catch (_) {}
+    try { db.pragma('synchronous = NORMAL'); } catch (_) { }
+    try { db.pragma('foreign_keys = ON'); } catch (_) { }
 
     createTables(db);
     seedInitialDataIfEmpty(db);

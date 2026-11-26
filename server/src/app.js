@@ -126,6 +126,18 @@ process.on('unhandledRejection', (reason) => {
   console.error('⚠️ [Unhandled Rejection Prevista]', reason);
 });
 
+process.on('SIGINT', () => {
+  console.log('⚠️ [Señal SIGINT recibida]');
+});
+
+process.on('SIGTERM', () => {
+  console.log('⚠️ [Señal SIGTERM recibida]');
+});
+
+process.on('exit', (code) => {
+  console.log(`⚠️ [Proceso Express saliendo con código: ${code}]`);
+});
+
 // Iniciar servidor y base de datos con tolerancia absoluta a fallos
 async function start() {
   try {
@@ -134,17 +146,29 @@ async function start() {
     console.error('⚠️ [DB Warning al Iniciar Servidor] SQLite operando en modo contingencia:', err.message);
   }
 
-  // Garantizar que Express escuche en 0.0.0.0:PORT para que los health checks de Traefik/Dokploy
-  // nunca retornen 502 Bad Gateway
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`=======================================================`);
-    console.log(`🍔 Hamburger Rapid Commercial Platform ejecutándose en puerto ${PORT}`);
-    console.log(`   - E-commerce:  http://localhost:${PORT}/`);
-    console.log(`   - PWA Mobile:  http://localhost:${PORT}/app`);
-    console.log(`   - Panel Admin: http://localhost:${PORT}/admin`);
-    console.log(`   - API Health:  http://localhost:${PORT}/api/health`);
-    console.log(`=======================================================`);
-  });
+  // Garantizar que Express escuche en 0.0.0.0:PORT con tolerancia automática a colisiones locales
+  function listenOnPort(currentPort, attemptsLeft = 10) {
+    const server = app.listen(currentPort, '0.0.0.0', () => {
+      console.log(`=======================================================`);
+      console.log(`🍔 Hamburger Rapid Commercial Platform ejecutándose en puerto ${currentPort}`);
+      console.log(`   - E-commerce:  http://localhost:${currentPort}/`);
+      console.log(`   - PWA Mobile:  http://localhost:${currentPort}/app`);
+      console.log(`   - Panel Admin: http://localhost:${currentPort}/admin`);
+      console.log(`   - API Health:  http://localhost:${currentPort}/api/health`);
+      console.log(`=======================================================`);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE' && attemptsLeft > 0) {
+        console.warn(`⚠️ [Port Warning] Puerto ${currentPort} en uso. Reintentando automáticamente en puerto ${currentPort + 1}...`);
+        listenOnPort(currentPort + 1, attemptsLeft - 1);
+      } else {
+        console.error('❌ [Server Listen Error]', err.message);
+      }
+    });
+  }
+
+  listenOnPort(Number(PORT));
 }
 
 start();
